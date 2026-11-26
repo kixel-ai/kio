@@ -58,10 +58,13 @@ impl<T: Transport, const S: usize, const G: usize> Driver<T, S, G> {
 	/// this pass cannot make the pick stale. In either order, that group is admitted whenever
 	/// any cached group is.
 	///
+	/// `pick` is checked only when the session admits a cached group; otherwise the pass
+	/// ignores it, so a wrong pick goes unnoticed until then.
+	///
 	/// # Panics
 	///
-	/// If `pick` is not cached, or is `None` while the cache holds a group the session admits,
-	/// which is the caller's bug.
+	/// If `cached` holds a group `sub` already took, or the session admits a cached group and
+	/// `pick` is not one, which is the caller's bug.
 	pub fn poll_step(&self, sub: usize, cached: u16, pick: Option<u8>, waiter: &kio::Waiter) -> Poll<()> {
 		let mut wake = [const { None }; S];
 		let parked = {
@@ -83,11 +86,19 @@ impl<T: Transport, const S: usize, const G: usize> Driver<T, S, G> {
 	}
 
 	/// The transport sent `sub`'s stream of `group` whole.
+	///
+	/// A report for a stream no longer listed is stale and ignored: a higher-priority pass
+	/// reset it after the transport sent it, before this call took the lock. The session
+	/// refuses such a report before changing anything.
 	pub fn finished(&self, sub: usize, group: u8) {
 		self.transport(Event::Finished { sub, group });
 	}
 
 	/// The peer freed a stream.
+	///
+	/// # Panics
+	///
+	/// If the peer frees more streams than were opened, which is the transport's bug.
 	pub fn freed(&self) {
 		self.transport(Event::Freed);
 	}
@@ -98,10 +109,11 @@ impl<T: Transport, const S: usize, const G: usize> Driver<T, S, G> {
 			let mut state = self.lock();
 			let state = &mut *state;
 			state.out.clear();
-			state
-				.session
-				.step(event, &mut state.out)
-				.expect("the transport reports what happened");
+			let stepped = state.session.step(event, &mut state.out);
+			if stepped.is_err() && matches!(event, Event::Finished { .. }) {
+				return;
+			}
+			stepped.expect("the peer frees only streams it was granted");
 			route(state, &mut wake, None);
 		}
 		wake_all(wake);
@@ -233,6 +245,31 @@ mod tests {
 		driver.applied();
 		assert!(driver.poll_step(1, 0b110, Some(2), &waiters[1]).is_ready());
 		assert_eq!(driver.applied()[0], Output::Open { sub: 1, group: 1 });
+	}
+
+	/// A stream reset by a higher-priority open, then reported sent whole by a transport that
+	/// finished it first, leaves the driver as it was and still usable.
+	#[test]
+	fn ignores_a_finish_after_reset() {
+		let driver = Driver::new(configs::priority(None).session, Vec::new());
+		let waiter = kio::Waiter::noop();
+
+		// The low-priority subscription 2 takes group 1 and opens it with the only credit.
+		assert!(driver.poll_step(1, 0b111, Some(1), &waiter).is_ready());
+		assert!(driver.poll_step(1, 0b110, Some(2), &waiter).is_ready());
+		assert!(driver.applied().contains(&Output::Open { sub: 1, group: 1 }));
+
+		// The high-priority subscription 1 takes group 3, waits, and resets that stream.
+		assert!(driver.poll_step(0, 0b111, Some(3), &waiter).is_ready());
+		assert!(driver.poll_step(0, 0b011, Some(2), &waiter).is_ready());
+		assert!(driver.applied().contains(&Output::Reset { sub: 1, group: 1 }));
+
+		let before = driver.session();
+		driver.finished(1, 1);
+		assert_eq!(driver.session(), before, "the stale report changes nothing");
+		driver.freed();
+		assert!(driver.poll_step(0, 0b011, Some(2), &waiter).is_ready());
+		assert!(driver.applied().contains(&Output::Open { sub: 0, group: 3 }));
 	}
 
 	/// Replay a schedule through the driver, landing where the machine alone does.
