@@ -976,7 +976,9 @@ impl<T: Send + Sync + 'static> Writer<T> {
 		ensures
 			final(self).wf(),
 	{
-		if index <= self.base() {
+		// Evicting to the end goes on even when nothing is left to evict, so a reserved
+		// segment no entry reached goes with it.
+		if index <= self.base() && index < self.end() {
 			return;
 		}
 		// Stored before the segments are retired: a reader that still sees the old base
@@ -1921,9 +1923,8 @@ mod test {
 		assert_eq!(get(&mut reader, 100), Ok(Some("x")));
 	}
 
-	/// Every index below `u64::MAX` takes an entry; the one past it panics.
+	/// Every index below `u64::MAX` takes an entry.
 	#[test]
-	#[should_panic(expected = "log index overflow")]
 	fn the_last_index_is_usable() {
 		let mut writer = Writer::new(u64::MAX - 2);
 		let mut reader = writer.reader();
@@ -1931,7 +1932,28 @@ mod test {
 		writer.push("b");
 		assert_eq!(writer.end(), u64::MAX);
 		assert_eq!(get(&mut reader, u64::MAX - 1), Ok(Some("b")));
-		writer.push("c");
+	}
+
+	/// No index is left once the end reaches `u64::MAX`.
+	#[test]
+	#[should_panic(expected = "log index overflow")]
+	fn pushing_past_the_last_index_panics() {
+		let mut writer = Writer::new(u64::MAX);
+		writer.push("a");
+	}
+
+	/// Evicting to the end, as dropping the writer does, frees a segment reserved but
+	/// never written.
+	#[test]
+	fn evicting_to_the_end_frees_a_reservation() {
+		let mut writer = Writer::<&str>::new(0);
+		writer.reserve();
+		writer.evict(0);
+		assert_eq!(
+			writer.heap(),
+			Writer::<&str>::SHARED,
+			"the reservation went with the eviction"
+		);
 	}
 
 	/// A clone reads independently from where the original's segment was.

@@ -59,13 +59,13 @@
           packages = {
             quest = quest-cli;
           }
-          // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux { inherit verus; };
+          // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux { inherit verus; };
           devShells = {
             default = pkgs.mkShell { packages = devPackages; };
           }
           # The default shell plus Verus, for `just verify`. Separate so the merge gate's
           # shell doesn't download Verus's toolchain; Linux only, as Verus's release is.
-          // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+          // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
             verus = pkgs.mkShell { packages = devPackages ++ [ verus ]; };
           };
           formatter = pkgs.nixfmt;
