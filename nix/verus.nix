@@ -1,9 +1,9 @@
-# Verus, the verifier `just verify` runs over the `verus!` blocks in src/log.rs.
+# Verus, the verifier `just verify` runs over src/log.rs's proof.
 #
 # Verus is a rustc driver linked against one exact toolchain's librustc_driver, so this
 # wraps its release build with that toolchain instead of the rustup install its launcher
 # expects. Bump `version` and `toolchain` together: the release's rust-toolchain.toml
-# names the toolchain, and the vstd and verus_builtin* versions in Cargo.toml must match
+# names the toolchain, and the vstd version in verify/Cargo.toml must match
 # the release's date.
 {
   pkgs,

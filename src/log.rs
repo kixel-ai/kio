@@ -29,8 +29,9 @@
 //! The proof is written in Verus's attribute syntax, so this file is plain Rust to
 //! every other build: contracts sit in `#[cfg_attr(verus_keep_ghost, verus_spec(..))]`,
 //! proof steps in `proof!`, `proof_decl!`, and `proof_with!`, and the ghost types and
-//! lemmas in `verus!` blocks under `#[cfg(verus_keep_ghost)]`. Only `just verify` sets
-//! that cfg, so plain builds compile no Verus crate; `log/erased.rs` stands in for its
+//! lemmas in `verus!` blocks under `#[cfg(verus_keep_ghost)]`. Only Verus sets that cfg,
+//! and only the `verify/` package, which builds these sources for `just verify`, depends
+//! on `vstd`, so other builds compile no Verus crate; `log/erased.rs` stands in for its
 //! macros.
 //!
 //! The proof trusts what it does not check, each marked `TRUSTED` below. The main
@@ -173,6 +174,10 @@ impl<T> Segment<T> {
 /// TRUSTED: a segment a pinned read reached stays allocated until the pin drops, which
 /// epoch reclamation guarantees and the proof does not model; the reference lives for
 /// `'a`, which the caller ties to its pin.
+///
+/// # Safety
+///
+/// `ptr` stays allocated for `'a`: a reader's pin or the writer's list holds its segment.
 #[cfg_attr(verus_keep_ghost, verus_verify(external_body), verus_spec(value =>
 	with
 		Tracked(perm): Tracked<&Frozen<PointsTo<X>>>
@@ -182,8 +187,8 @@ impl<T> Segment<T> {
 	ensures
 		*value == perm@.value(),
 ))]
-fn pinned<'a, X>(ptr: *mut X) -> &'a X {
-	// SAFETY: initialized, per the permission, and alive for `'a`, per the caller's pin.
+unsafe fn pinned<'a, X>(ptr: *mut X) -> &'a X {
+	// SAFETY: initialized, per the permission, and alive for `'a`, per the caller.
 	unsafe { &*ptr }
 }
 
@@ -300,14 +305,24 @@ impl<T> Segment<T> {
 
 	/// TRUSTED: the slot at `at`, derived from the allocation's pointer so it may reach past
 	/// the header.
+	///
+	/// # Safety
+	///
+	/// `segment` is live and `at` is below its capacity.
 	#[cfg_attr(verus_keep_ghost, verifier::external_body)]
 	#[cfg_attr(verus_keep_ghost, verus_spec(slot =>
+		with
+			Tracked(header): Tracked<&Frozen<PointsTo<Self>>>
+		requires
+			header@.ptr() == segment.as_ptr(),
+			header@.is_init(),
+			at < header@.value().capacity,
 		ensures
 			slot == slot_ptr(segment.as_ptr(), at as int),
 	))]
-	fn slot(segment: NonNull<Self>, at: usize) -> *mut T {
-		// SAFETY: in bounds of the allocation, for an `at` below the capacity, and
-		// `MaybeUninit` and `UnsafeCell` share their content's layout.
+	unsafe fn slot(segment: NonNull<Self>, at: usize) -> *mut T {
+		// SAFETY: in bounds of the allocation, per the caller, and `MaybeUninit` and
+		// `UnsafeCell` share their content's layout.
 		unsafe {
 			ptr::addr_of!((*segment.as_ptr()).slots)
 				.cast::<Slot<T>>()
@@ -318,6 +333,10 @@ impl<T> Segment<T> {
 	}
 
 	/// The header of a segment a reader reached.
+	///
+	/// # Safety
+	///
+	/// `segment` stays live for `'a`.
 	#[cfg_attr(verus_keep_ghost, verus_spec(header =>
 		with
 			Tracked(perm): Tracked<&Frozen<PointsTo<Self>>>
@@ -327,9 +346,12 @@ impl<T> Segment<T> {
 		ensures
 			*header == perm@.value(),
 	))]
-	fn header<'a>(segment: NonNull<Self>) -> &'a Self {
-		proof_with!(Tracked(perm));
-		pinned(segment.as_ptr())
+	unsafe fn header<'a>(segment: NonNull<Self>) -> &'a Self {
+		// SAFETY: live for `'a`, per the caller.
+		unsafe {
+			proof_with!(Tracked(perm));
+			pinned(segment.as_ptr())
+		}
 	}
 
 	/// Heap a segment of `capacity` slots occupies, as [`Self::heap`].
@@ -339,6 +361,10 @@ impl<T> Segment<T> {
 	}
 
 	/// The written entry at `index`.
+	///
+	/// # Safety
+	///
+	/// `segment` stays live for `'a`.
 	#[cfg_attr(verus_keep_ghost, verus_spec(entry =>
 		with
 			Tracked(header): Tracked<&Frozen<PointsTo<Self>>>,
@@ -352,13 +378,23 @@ impl<T> Segment<T> {
 		ensures
 			*entry == slot@.value(),
 	))]
-	fn get<'a>(segment: NonNull<Self>, index: u64) -> &'a T {
-		proof_with!(Tracked(header));
-		let first = Self::header(segment);
+	unsafe fn get<'a>(segment: NonNull<Self>, index: u64) -> &'a T {
+		// SAFETY: live for `'a`, per the caller.
+		let first = unsafe {
+			proof_with!(Tracked(header));
+			Self::header(segment)
+		};
 		let at = (index - first.start) as usize;
-		let slot_at = Self::slot(segment, at);
-		proof_with!(Tracked(slot));
-		pinned(slot_at)
+		// SAFETY: live, per the caller, and `index` is in the segment's range.
+		let slot_at = unsafe {
+			proof_with!(Tracked(header));
+			Self::slot(segment, at)
+		};
+		// SAFETY: a slot of the segment, which is live for `'a`.
+		unsafe {
+			proof_with!(Tracked(slot));
+			pinned(slot_at)
+		}
 	}
 }
 
@@ -910,8 +946,11 @@ impl<T: Send + Sync + 'static> Writer<T> {
 			proof_decl! {
 				let tracked live = self.pen.borrow().live.tracked_borrow(tail_id);
 			}
-			proof_with!(Tracked(&live.header));
-			let tail = Segment::header(list[list.len() - 1]);
+			// SAFETY: the writer's list holds the segment while `self` is borrowed.
+			let tail = unsafe {
+				proof_with!(Tracked(&live.header));
+				Segment::header(list[list.len() - 1])
+			};
 			if end < tail.start + tail.capacity as u64 {
 				return;
 			}
@@ -1075,8 +1114,11 @@ impl<T: Send + Sync + 'static> Writer<T> {
 		proof_decl! {
 			let tracked live = self.pen.borrow().live.tracked_borrow(id).copy();
 		}
-		proof_with!(Tracked(&live.header));
-		let header = Segment::header(tail);
+		// SAFETY: the writer's list holds the segment while `self` is borrowed.
+		let header = unsafe {
+			proof_with!(Tracked(&live.header));
+			Segment::header(tail)
+		};
 		let at = (end - header.start) as usize;
 		proof! {
 			assert(*header == self.live(list.len() - 1).header);
@@ -1085,7 +1127,11 @@ impl<T: Send + Sync + 'static> Writer<T> {
 		proof_decl! {
 			let tracked mut slot = self.pen.borrow_mut().unwritten.tracked_remove(at as nat);
 		}
-		let place = Segment::slot(tail, at);
+		// SAFETY: the writer's list holds the segment, and `reserve` left `end` inside it.
+		let place = unsafe {
+			proof_with!(Tracked(&live.header));
+			Segment::slot(tail, at)
+		};
 		proof_with!(Tracked(&mut slot));
 		write(place, value);
 		proof_decl! {
@@ -1112,6 +1158,17 @@ impl<T: Send + Sync + 'static> Writer<T> {
 				self.pen.borrow_mut().view.update(&mut ledger.view, new_view);
 				assert forall|i: nat| #[trigger] new_view.segments.contains_key(i) implies segment_inv(ledger, i) by {
 					assert(segment_inv(before, i));
+					// Spelled out: Verus proves each conjunct of `segment_inv` but not the whole.
+					let segment = new_view.segments[i];
+					assert forall|a: nat| a < segment.filled implies {
+						&&& #[trigger] ledger.slots.contains_key((i, a))
+						&&& ledger.slots[(i, a)]@.ptr() == slot_ptr(segment.ptr, a as int)
+						&&& ledger.slots[(i, a)]@.is_init()
+					} by {
+						if i != id || a < at {
+							assert(before.slots.contains_key((i, a)));
+						}
+					}
 				}
 				assert(ledger.registry@.dom() =~= new_view.segments.dom());
 			}
@@ -1209,8 +1266,11 @@ impl<T: Send + Sync + 'static> Writer<T> {
 				let ghost id = self.pen@.ids[evicted as int];
 				let tracked live = self.pen.borrow().live.tracked_borrow(id);
 			}
-			proof_with!(Tracked(&live.header));
-			let segment = Segment::header(list[evicted]);
+			// SAFETY: the writer's list holds the segment while `self` is borrowed.
+			let segment = unsafe {
+				proof_with!(Tracked(&live.header));
+				Segment::header(list[evicted])
+			};
 			let filled;
 			open_atomic_invariant!(self.shared.ledger.borrow() => ledger => {
 				proof! {
@@ -1505,8 +1565,11 @@ impl<T> Read<'_, T> {
 				proof_decl! {
 					let tracked reached = self.reader.reached.borrow().tracked_borrow();
 				}
-				proof_with!(Tracked(&reached.header));
-				let header = Segment::header(segment);
+				// SAFETY: this read's pin holds the hinted segment, per `Reader::read`'s check.
+				let header = unsafe {
+					proof_with!(Tracked(&reached.header));
+					Segment::header(segment)
+				};
 				let filled;
 				proof_decl! {
 					let tracked mut slot = None;
@@ -1531,8 +1594,11 @@ impl<T> Read<'_, T> {
 						let tracked slot = slot.tracked_unwrap();
 					}
 					// `filled` covers `index`, so its slot was written.
-					proof_with!(Tracked(&reached.header), Tracked(&slot));
-					let entry = Segment::get(segment, index);
+					// SAFETY: as above.
+					let entry = unsafe {
+						proof_with!(Tracked(&reached.header), Tracked(&slot));
+						Segment::get(segment, index)
+					};
 					return Ok(Some(entry));
 				}
 			}
@@ -1604,16 +1670,22 @@ impl<T> Read<'_, T> {
 		proof_decl! {
 			let tracked Found { reached, slot } = found.tracked_unwrap();
 		}
-		proof_with!(Tracked(&reached.header));
-		let header = Segment::header(segment);
+		// SAFETY: found under this read's pin, which holds it.
+		let header = unsafe {
+			proof_with!(Tracked(&reached.header));
+			Segment::header(segment)
+		};
 		// Only as good as this pin's, which `Reader::read` checks before trusting it.
 		self.reader.hint = Some((segment, header.start));
 		proof! {
 			self.reader.reached = Tracked(Some(reached.copy()));
 		}
 		// `filled` covers `index`, so its slot was written.
-		proof_with!(Tracked(&reached.header), Tracked(&slot));
-		let entry = Segment::get(segment, index);
+		// SAFETY: as above.
+		let entry = unsafe {
+			proof_with!(Tracked(&reached.header), Tracked(&slot));
+			Segment::get(segment, index)
+		};
 		Ok(Some(entry))
 	}
 
@@ -1647,8 +1719,11 @@ impl<T> Read<'_, T> {
 				hit matches Some(stop) ==> found matches Some(f) && f.wf(ledger.constant(), stop, index),
 		))]
 		loop {
-			proof_with!(Tracked(&reached.header));
-			let header = Segment::header(segment);
+			// SAFETY: linked from a segment the caller reached under its pin, which holds it.
+			let header = unsafe {
+				proof_with!(Tracked(&reached.header));
+				Segment::header(segment)
+			};
 			if index < header.start {
 				break;
 			}

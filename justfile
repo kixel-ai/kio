@@ -22,11 +22,10 @@ test *args:
 # Run what CI runs: lint, then test.
 ci: check test
 
-# Prove src/log.rs's Verus proof. Needs Verus: run it in `nix develop .#verus`. The cfg
-# adds `vstd`, which plain builds never compile; its own target dir keeps the changed
-# flags from rebuilding the plain one.
+# Prove src/log.rs's Verus proof. Needs Verus: run it in `nix develop .#verus`. The
+# `verify` package builds kio's sources with `vstd`, which kio itself never depends on.
 verify:
-    RUSTFLAGS="--cfg verus_keep_ghost" cargo verus verify -p kio --target-dir target/verus
+    cargo verus verify --locked --manifest-path verify/Cargo.toml --target-dir target/verus
 
 # Apply formatters without changing program behavior.
 fix:
