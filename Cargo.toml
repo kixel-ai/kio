@@ -1,13 +1,15 @@
 [workspace]
-members = [".", "macros"]
+members = [".", "macros", "lab/pure-machine"]
 resolver = "2"
 
 [workspace.package]
 rust-version = "1.91"
 
 [workspace.lints.rust]
-# Set by `cargo verus`, which keeps the ghost code plain builds erase.
+# Kani compiles lab/pure-machine's proof harnesses under `cfg(kani)`; `cargo verus` sets the
+# others, keeping the ghost code plain builds erase.
 unexpected_cfgs = { level = "warn", check-cfg = [
+    "cfg(kani)",
     "cfg(verus_only)",
     "cfg(verus_keep_ghost)",
     "cfg(verus_keep_ghost_body)",
