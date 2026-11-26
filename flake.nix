@@ -50,6 +50,7 @@
             git
             gh
             actionlint
+            cargo-shear
             taplo
             nixfmt
           ];
