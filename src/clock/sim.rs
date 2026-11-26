@@ -485,7 +485,7 @@ fn run_inner(runtime: &Runtime, future: Pin<&mut dyn Future<Output = ()>>, locat
 	};
 	// In id order, so a run that ends drops what is still pending in the same order on replay.
 	let mut spawned = BTreeMap::new();
-	// Tasks that woke themselves while they ran.
+	// Tasks that called `yield_now` in their last poll, which wait behind every task ready ahead of them.
 	let mut yielded = BTreeSet::new();
 	let mut weights = Vec::new();
 	let fifo = runtime.schedule.borrow().is_fifo();
