@@ -349,6 +349,9 @@ struct TaskWaker {
 	queued: AtomicBool,
 	/// Set once the task finished, so a stale wake neither queues it nor counts as progress.
 	retired: AtomicBool,
+	/// Set by a wake from outside any simulated poll, such as a worker thread's, which a
+	/// probe must leave to the scheduler.
+	outside: AtomicBool,
 	ready: Arc<Ready>,
 }
 
@@ -358,6 +361,7 @@ impl TaskWaker {
 			id,
 			queued: AtomicBool::new(false),
 			retired: AtomicBool::new(false),
+			outside: AtomicBool::new(false),
 			ready: ready.clone(),
 		})
 	}
@@ -373,6 +377,9 @@ impl Wake for TaskWaker {
 			return;
 		}
 		event();
+		if !crate::coop::polling() {
+			self.outside.store(true, Ordering::Release);
+		}
 		// Another thread's copy never names a task of this run's thread.
 		let _ = POLLED.try_with(|polled| {
 			let me = Arc::as_ptr(self) as usize;
@@ -676,13 +683,17 @@ fn probe(runtime: &Runtime, root: &mut Root<'_>, spawned: &mut BTreeMap<usize, S
 		let before = events();
 		BLAMED.set(None);
 		runtime.running.set(id);
-		let (done, woke) = root.poll(spawned, id);
-		let quiet = events() == before && BLAMED.get().is_none();
-		// Woken with no event on this thread: another thread woke it during the poll.
-		if quiet && woke {
+		let queue = match id {
+			ROOT => root.queue.clone(),
+			id => spawned[&id].queue.clone(),
+		};
+		queue.outside.store(false, Ordering::Release);
+		let (done, _) = root.poll(spawned, id);
+		// Another thread woke it during the poll, whatever else the poll did.
+		if queue.outside.load(Ordering::Acquire) {
 			return done.then_some(id);
 		}
-		if !done && quiet {
+		if !done && events() == before && BLAMED.get().is_none() {
 			continue;
 		}
 		let task = match id {
@@ -1922,6 +1933,23 @@ mod tests {
 				Poll::Ready(())
 			})
 			.await;
+		});
+	}
+
+	/// Likewise when the task it woke then wakes its joiner.
+	#[test]
+	fn the_probe_finishes_a_task_another_thread_woke_though_it_woke_its_joiner() {
+		run_with(0, probing(), async {
+			spawn(std::future::poll_fn(|cx| {
+				if !super::probing() {
+					return Poll::Pending;
+				}
+				let waker = cx.waker().clone();
+				std::thread::spawn(move || waker.wake()).join().unwrap();
+				Poll::Ready(())
+			}))
+			.await
+			.unwrap();
 		});
 	}
 
