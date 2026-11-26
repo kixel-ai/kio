@@ -194,6 +194,10 @@ unsafe fn pinned<'a, X>(ptr: *mut X) -> &'a X {
 
 /// TRUSTED: `vstd::raw_ptr::ptr_mut_write`, with its contract, which plain builds can't
 /// call without `vstd`.
+///
+/// # Safety
+///
+/// `ptr` is allocated and aligned for an `X`, and nothing else reads or writes it.
 #[cfg_attr(verus_keep_ghost, verus_verify(external_body), verus_spec(
 	with
 		Tracked(perm): Tracked<&mut PointsTo<X>>
@@ -207,8 +211,8 @@ unsafe fn pinned<'a, X>(ptr: *mut X) -> &'a X {
 	no_unwind
 ))]
 #[inline]
-fn write<X>(ptr: *mut X, value: X) {
-	// SAFETY: the permission covers `ptr`, so it is allocated and aligned for an `X`.
+unsafe fn write<X>(ptr: *mut X, value: X) {
+	// SAFETY: allocated, aligned, and exclusive, per the caller.
 	unsafe { ptr.write(value) }
 }
 
@@ -294,8 +298,11 @@ impl<T> Segment<T> {
 			next,
 			slots: [],
 		};
-		proof_with!(Tracked(&mut header));
-		write(segment.as_ptr(), value);
+		// SAFETY: the header of the allocation just made, which no one else holds yet.
+		unsafe {
+			proof_with!(Tracked(&mut header));
+			write(segment.as_ptr(), value);
+		}
 		proof_decl! {
 			let tracked fresh = Fresh { header, filled: filled_perm, next: next_perm, slots };
 		}
@@ -1132,8 +1139,11 @@ impl<T: Send + Sync + 'static> Writer<T> {
 			proof_with!(Tracked(&live.header));
 			Segment::slot(tail, at)
 		};
-		proof_with!(Tracked(&mut slot));
-		write(place, value);
+		// SAFETY: a slot of a live segment, which no reader sees until `filled` covers it.
+		unsafe {
+			proof_with!(Tracked(&mut slot));
+			write(place, value);
+		}
 		proof_decl! {
 			let tracked slot = Frozen::new(slot);
 		}
