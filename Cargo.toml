@@ -18,6 +18,8 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 [workspace.lints.clippy]
 # Every suppression says why, so the next lint audit can judge it.
 allow_attributes_without_reason = "warn"
+# `#[expect]` fails once its lint stops firing, so a stale suppression can't linger.
+allow_attributes = "warn"
 
 [workspace.dependencies]
 # Only `std`: the simulator needs no executor or `select!` macros, so it builds no futures-macro.
