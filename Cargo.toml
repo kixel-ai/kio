@@ -1,12 +1,12 @@
 [workspace]
-members = [".", "macros", "spikes/pure-machine"]
+members = [".", "macros", "lab/pure-machine"]
 resolver = "2"
 
 [workspace.package]
 rust-version = "1.91"
 
 [workspace.lints.rust]
-# Kani compiles spikes/pure-machine's proof harnesses under `cfg(kani)`.
+# Kani compiles lab/pure-machine's proof harnesses under `cfg(kani)`.
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
 
 [workspace.lints.clippy]

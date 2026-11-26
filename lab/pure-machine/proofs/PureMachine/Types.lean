@@ -21,13 +21,13 @@ set_option maxRecDepth 2048
 namespace pure_machine
 
 /-- [kio_pure_machine::Disabled]
-    Source: 'spikes/pure-machine/src/lib.rs', lines 43:0-43:20
+    Source: 'lab/pure-machine/src/lib.rs', lines 43:0-43:20
     Visibility: public -/
 @[reducible]
 def Disabled := Unit
 
 /-- [kio_pure_machine::send_credit::Mutant]
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 41:0-49:1
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 41:0-49:1
     Visibility: public -/
 @[discriminant isize]
 inductive send_credit.Mutant where
@@ -36,7 +36,7 @@ inductive send_credit.Mutant where
 | NoLeaveWake : send_credit.Mutant
 
 /-- [kio_pure_machine::send_credit::Shape]
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 27:0-36:1
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 27:0-36:1
     Visibility: public -/
 structure send_credit.Shape (S : Std.Usize) where
   priority : Array Std.U8 S
@@ -45,7 +45,7 @@ structure send_credit.Shape (S : Std.Usize) where
   mutant : Option send_credit.Mutant
 
 /-- [kio_pure_machine::send_credit::Rank]
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 55:0-62:1
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 55:0-62:1
     Visibility: public -/
 structure send_credit.Rank where
   priority : Std.U8
@@ -53,14 +53,14 @@ structure send_credit.Rank where
   in_group : Std.I16
 
 /-- [kio_pure_machine::send_credit::Place]
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 85:0-90:1
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 85:0-90:1
     Visibility: public -/
 structure send_credit.Place where
   rank : send_credit.Rank
   arrival : Std.U8
 
 /-- [kio_pure_machine::send_credit::Sub]
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 95:0-106:1
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 95:0-106:1
     Visibility: public -/
 structure send_credit.Sub (G : Std.Usize) where
   opening : Option Std.U8
@@ -70,7 +70,7 @@ structure send_credit.Sub (G : Std.Usize) where
   serving : Array Bool G
 
 /-- [kio_pure_machine::send_credit::Session]
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 111:0-124:1
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 111:0-124:1
     Visibility: public -/
 structure send_credit.Session (S : Std.Usize) (G : Std.Usize) where
   shape : send_credit.Shape S
@@ -81,7 +81,7 @@ structure send_credit.Session (S : Std.Usize) (G : Std.Usize) where
   freed : Std.U8
 
 /-- [kio_pure_machine::send_credit::Event]
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 129:0-150:1
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 129:0-150:1
     Visibility: public -/
 @[discriminant isize]
 inductive send_credit.Event where
@@ -90,7 +90,7 @@ inductive send_credit.Event where
 | Freed : send_credit.Event
 
 /-- [kio_pure_machine::send_credit::Output]
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 154:0-188:1
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 154:0-188:1
     Visibility: public -/
 @[discriminant isize]
 inductive send_credit.Output where
@@ -102,7 +102,7 @@ inductive send_credit.Output where
 | Reset : Std.Usize → Std.U8 → send_credit.Output
 
 /-- [kio_pure_machine::warm_settle::Sig]
-    Source: 'spikes/pure-machine/src/warm_settle.rs', lines 24:0-31:1
+    Source: 'lab/pure-machine/src/warm_settle.rs', lines 24:0-31:1
     Visibility: public -/
 structure warm_settle.Sig where
   cost : Std.U32
@@ -110,7 +110,7 @@ structure warm_settle.Sig where
   rank : Std.U32
 
 /-- [kio_pure_machine::warm_settle::Answer]
-    Source: 'spikes/pure-machine/src/warm_settle.rs', lines 35:0-44:1
+    Source: 'lab/pure-machine/src/warm_settle.rs', lines 35:0-44:1
     Visibility: public -/
 @[discriminant isize]
 inductive warm_settle.Answer where
@@ -120,7 +120,7 @@ inductive warm_settle.Answer where
 | Lost : warm_settle.Answer
 
 /-- [kio_pure_machine::warm_settle::Heard]
-    Source: 'spikes/pure-machine/src/warm_settle.rs', lines 48:0-55:1
+    Source: 'lab/pure-machine/src/warm_settle.rs', lines 48:0-55:1
     Visibility: public -/
 structure warm_settle.Heard where
   pull : Option Std.U32
@@ -128,7 +128,7 @@ structure warm_settle.Heard where
   advert : Option warm_settle.Sig
 
 /-- [kio_pure_machine::warm_settle::Link]
-    Source: 'spikes/pure-machine/src/warm_settle.rs', lines 68:0-75:1
+    Source: 'lab/pure-machine/src/warm_settle.rs', lines 68:0-75:1
     Visibility: public -/
 structure warm_settle.Link where
   «open» : Bool
@@ -136,7 +136,7 @@ structure warm_settle.Link where
   warm : Std.U32
 
 /-- [kio_pure_machine::warm_settle::Pull]
-    Source: 'spikes/pure-machine/src/warm_settle.rs', lines 79:0-88:1
+    Source: 'lab/pure-machine/src/warm_settle.rs', lines 79:0-88:1
     Visibility: public -/
 @[discriminant isize]
 inductive warm_settle.Pull where
@@ -146,7 +146,7 @@ inductive warm_settle.Pull where
 | Pending : warm_settle.Pull
 
 /-- [kio_pure_machine::warm_settle::Choice]
-    Source: 'spikes/pure-machine/src/warm_settle.rs', lines 92:0-101:1
+    Source: 'lab/pure-machine/src/warm_settle.rs', lines 92:0-101:1
     Visibility: public -/
 structure warm_settle.Choice where
   via : Std.U8
@@ -155,7 +155,7 @@ structure warm_settle.Choice where
   rank : Std.U32
 
 /-- [kio_pure_machine::warm_settle::Relay]
-    Source: 'spikes/pure-machine/src/warm_settle.rs', lines 126:0-143:1
+    Source: 'lab/pure-machine/src/warm_settle.rs', lines 126:0-143:1
     Visibility: public -/
 structure warm_settle.Relay (N : Std.Usize) where
   id : Std.U8

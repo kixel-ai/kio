@@ -1,6 +1,6 @@
 //! Kani harnesses: one step from any well-formed session, not only a reachable one.
 //!
-//! Run with `cargo kani -p kio-pure-machine`.
+//! Run with `lab/pure-machine/kani.sh`, which installs Kani on first use.
 
 use super::*;
 

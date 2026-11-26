@@ -58,8 +58,8 @@
               nixfmt
             ];
           };
-          # spikes/pure-machine's Charon, Aeneas, and Lean: `nix develop .#prove`.
-          devShells.prove = import ./spikes/pure-machine/prove.nix { inherit pkgs; };
+          # lab/pure-machine's Charon, Aeneas, and Lean: `nix develop .#prove`.
+          devShells.prove = import ./lab/pure-machine/prove.nix { inherit pkgs; };
           formatter = pkgs.nixfmt;
           checks.quest-tree = pkgs.runCommand "quest-tree" { nativeBuildInputs = [ quest-cli ]; } ''
             quest --root ${self} check

@@ -532,11 +532,8 @@ impl<const S: usize, const G: usize> Session<S, G> {
 			next.cursor(s, k, &mut scratch);
 		}
 		*self = next;
-		let mut i = 0;
-		while i < scratch.len() {
-			out.push(scratch[i]);
-			i += 1;
-		}
+		// Not a push loop: Kani would need to unwind it as far as a pass has outputs.
+		out.extend_from_slice(&scratch);
 		Ok(())
 	}
 

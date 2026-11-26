@@ -3,7 +3,7 @@
 # Kani, and `cargo kani setup` installs its pinned nightly with rustup, here a rustup from
 # nixpkgs whose homes stay in target/.
 #
-# Usage: spikes/pure-machine/kani.sh [cargo kani arguments, such as --harness NAME]
+# Usage: lab/pure-machine/kani.sh [cargo kani arguments, such as --harness NAME]
 set -euo pipefail
 
 root=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)

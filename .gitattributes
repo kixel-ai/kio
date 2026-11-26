@@ -1,5 +1,5 @@
 * text=auto eol=lf
 quest/** merge=quest
-# Aeneas writes these from spikes/pure-machine/src (prove.sh --write).
-spikes/pure-machine/proofs/PureMachine/Types.lean linguist-generated
-spikes/pure-machine/proofs/PureMachine/Funs.lean linguist-generated
+# Aeneas writes these from lab/pure-machine/src (prove.sh --write).
+lab/pure-machine/proofs/PureMachine/Types.lean linguist-generated
+lab/pure-machine/proofs/PureMachine/Funs.lean linguist-generated

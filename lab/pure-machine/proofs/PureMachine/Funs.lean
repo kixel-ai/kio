@@ -22,7 +22,7 @@ set_option maxRecDepth 2048
 namespace pure_machine
 
 /-- [kio_pure_machine::send_credit::is]:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 65:0-70:1 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 65:0-70:1 -/
 def send_credit.is
   {T : Type _} (coremarkerCopyInst : core.marker.Copy T) (corecmpPartialEqInst
   : core.cmp.PartialEq T T) (x : Option T) (v : T) :
@@ -33,7 +33,7 @@ def send_credit.is
   | some y => corecmpPartialEqInst.eq y v
 
 /-- [kio_pure_machine::send_credit::above]:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 73:0-76:1
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 73:0-76:1
     Visibility: public -/
 def send_credit.above
   (a : send_credit.Rank) (b : send_credit.Rank) : Result Bool := do
@@ -50,7 +50,7 @@ def send_credit.above
     else ok false
 
 /-- [kio_pure_machine::send_credit::same]:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 78:0-80:1 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 78:0-80:1 -/
 def send_credit.same
   (a : send_credit.Rank) (b : send_credit.Rank) : Result Bool := do
   if a.priority = b.priority
@@ -60,22 +60,37 @@ def send_credit.same
   else ok false
 
 /-- [kio_pure_machine::send_credit::{impl core::clone::Clone for kio_pure_machine::send_credit::Sub<G>}::clone]:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 93:9-93:14
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 93:9-93:14
     Visibility: public -/
 def send_credit.Sub.Insts.CoreCloneClone.clone
   {G : Std.Usize} (self : send_credit.Sub G) : Result (send_credit.Sub G) := do
   ok self
 
 /-- Trait implementation: [kio_pure_machine::send_credit::{impl core::clone::Clone for kio_pure_machine::send_credit::Sub<G>}]
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 93:9-93:14 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 93:9-93:14 -/
 @[reducible]
 def send_credit.Sub.Insts.CoreCloneClone (G : Std.Usize) : core.clone.Clone
   (send_credit.Sub G) := {
   clone := send_credit.Sub.Insts.CoreCloneClone.clone
 }
 
+/-- [kio_pure_machine::send_credit::{impl core::clone::Clone for kio_pure_machine::send_credit::Output}::clone]:
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 153:9-153:14
+    Visibility: public -/
+def send_credit.Output.Insts.CoreCloneClone.clone
+  (self : send_credit.Output) : Result send_credit.Output := do
+  ok self
+
+/-- Trait implementation: [kio_pure_machine::send_credit::{impl core::clone::Clone for kio_pure_machine::send_credit::Output}]
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 153:9-153:14 -/
+@[reducible]
+def send_credit.Output.Insts.CoreCloneClone : core.clone.Clone
+  send_credit.Output := {
+  clone := send_credit.Output.Insts.CoreCloneClone.clone
+}
+
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::new]:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 192:4-208:5
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 192:4-208:5
     Visibility: public -/
 def send_credit.Session.new
   {S : Std.Usize} (G : Std.Usize) (shape : send_credit.Shape S) :
@@ -102,7 +117,7 @@ def send_credit.Session.new
     }
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::sub]:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 212:4-214:5 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 212:4-214:5 -/
 def send_credit.Session.sub
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
   (s : Std.Usize) :
@@ -111,7 +126,7 @@ def send_credit.Session.sub
   Array.index_usize self.subs s
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::in_group]:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 217:4-219:5
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 217:4-219:5
     Visibility: public -/
 def send_credit.Session.in_group
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
@@ -125,7 +140,7 @@ def send_credit.Session.in_group
   else ok (UScalar.hcast .I16 k)
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::rank]:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 222:4-228:5
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 222:4-228:5
     Visibility: public -/
 def send_credit.Session.rank
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
@@ -138,7 +153,7 @@ def send_credit.Session.rank
   ok { priority := i, turn := s1.turn, in_group := i1 }
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::credit]:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 231:4-234:5
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 231:4-234:5
     Visibility: public -/
 def send_credit.Session.credit
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G) :
@@ -151,7 +166,7 @@ def send_credit.Session.credit
   ok (i < i3)
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::before]:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 237:4-242:5 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 237:4-242:5 -/
 def send_credit.Session.before
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
   (s : Std.Usize) (t : Std.Usize) :
@@ -175,7 +190,7 @@ def send_credit.Session.before
         else ok false
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::placed]: loop body 0:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 248:8-253:9 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 248:8-253:9 -/
 @[rust_loop_body]
 def send_credit.Session.placed_loop.body
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G) (n : Std.U8)
@@ -194,7 +209,7 @@ def send_credit.Session.placed_loop.body
   else ok (done n)
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::placed]: loop 0:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 248:8-253:9 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 248:8-253:9 -/
 @[rust_loop]
 def send_credit.Session.placed_loop
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G) (n : Std.U8)
@@ -206,7 +221,7 @@ def send_credit.Session.placed_loop
     (n, s)
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::placed]:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 245:4-255:5 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 245:4-255:5 -/
 @[reducible]
 def send_credit.Session.placed
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G) :
@@ -215,7 +230,7 @@ def send_credit.Session.placed
   send_credit.Session.placed_loop self 0#u8 0#usize
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::ahead]: loop body 0:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 261:8-266:9 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 261:8-266:9 -/
 @[rust_loop_body]
 def send_credit.Session.ahead_loop.body
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
@@ -233,7 +248,7 @@ def send_credit.Session.ahead_loop.body
   else ok (done n)
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::ahead]: loop 0:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 261:8-266:9 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 261:8-266:9 -/
 @[rust_loop]
 def send_credit.Session.ahead_loop
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
@@ -245,7 +260,7 @@ def send_credit.Session.ahead_loop
     (n, t)
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::ahead]:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 258:4-268:5 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 258:4-268:5 -/
 @[reducible]
 def send_credit.Session.ahead
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
@@ -255,7 +270,7 @@ def send_credit.Session.ahead
   send_credit.Session.ahead_loop self s 0#u8 0#usize
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::is_head]:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 271:4-273:5
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 271:4-273:5
     Visibility: public -/
 def send_credit.Session.is_head
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
@@ -270,7 +285,7 @@ def send_credit.Session.is_head
   else ok false
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::head]: loop body 0:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 278:8-285:5 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 278:8-285:5 -/
 @[rust_loop_body]
 def send_credit.Session.head_loop.body
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
@@ -287,7 +302,7 @@ def send_credit.Session.head_loop.body
   else ok (done none)
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::head]: loop 0:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 278:8-285:5 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 278:8-285:5 -/
 @[rust_loop]
 def send_credit.Session.head_loop
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
@@ -299,7 +314,7 @@ def send_credit.Session.head_loop
     s
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::head]:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 276:4-285:5 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 276:4-285:5 -/
 @[reducible]
 def send_credit.Session.head
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G) :
@@ -308,7 +323,7 @@ def send_credit.Session.head
   send_credit.Session.head_loop self 0#usize
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::preempts]:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 289:4-291:5
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 289:4-291:5
     Visibility: public -/
 def send_credit.Session.preempts
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
@@ -328,7 +343,7 @@ def send_credit.Session.preempts
     else ok false
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::lowest]: loop body 1:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 300:16-309:17 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 300:16-309:17 -/
 @[rust_loop_body]
 def send_credit.Session.lowest_loop0_loop0.body
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
@@ -364,7 +379,7 @@ def send_credit.Session.lowest_loop0_loop0.body
   else ok (done low)
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::lowest]: loop 1:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 300:16-309:17 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 300:16-309:17 -/
 @[rust_loop]
 def send_credit.Session.lowest_loop0_loop0
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
@@ -377,7 +392,7 @@ def send_credit.Session.lowest_loop0_loop0
     (low, j)
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::lowest]: loop body 2:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 300:16-309:17 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 300:16-309:17 -/
 @[rust_loop_body]
 def send_credit.Session.lowest_loop0_loop1.body
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
@@ -413,7 +428,7 @@ def send_credit.Session.lowest_loop0_loop1.body
   else ok (done low)
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::lowest]: loop 2:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 300:16-309:17 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 300:16-309:17 -/
 @[rust_loop]
 def send_credit.Session.lowest_loop0_loop1
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
@@ -426,7 +441,7 @@ def send_credit.Session.lowest_loop0_loop1
     (low, j)
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::lowest]: loop body 0:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 297:8-312:9 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 297:8-312:9 -/
 @[rust_loop_body]
 def send_credit.Session.lowest_loop0.body
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
@@ -456,7 +471,7 @@ def send_credit.Session.lowest_loop0.body
   else ok (done low)
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::lowest]: loop 0:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 297:8-312:9 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 297:8-312:9 -/
 @[rust_loop]
 def send_credit.Session.lowest_loop0
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
@@ -470,7 +485,7 @@ def send_credit.Session.lowest_loop0
     (low, t)
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::lowest]:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 294:4-314:5 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 294:4-314:5 -/
 @[reducible]
 def send_credit.Session.lowest
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
@@ -480,7 +495,7 @@ def send_credit.Session.lowest
   send_credit.Session.lowest_loop0 self «only» none 0#usize
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::candidate]:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 319:4-330:5
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 319:4-330:5
     Visibility: public -/
 def send_credit.Session.candidate
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
@@ -507,7 +522,7 @@ def send_credit.Session.candidate
         else ok none
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::make_room]: loop body 0:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 338:8-341:9 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 338:8-341:9 -/
 @[rust_loop_body]
 def send_credit.Session.make_room_loop0.body
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
@@ -532,7 +547,7 @@ def send_credit.Session.make_room_loop0.body
   else ok (done (self, owed))
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::make_room]: loop 0:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 338:8-341:9 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 338:8-341:9 -/
 @[rust_loop]
 def send_credit.Session.make_room_loop0
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
@@ -545,7 +560,7 @@ def send_credit.Session.make_room_loop0
     (self, owed, s)
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::make_room]: loop body 2:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 347:12-355:13 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 347:12-355:13 -/
 @[rust_loop_body]
 def send_credit.Session.make_room_loop1_loop0.body
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
@@ -576,7 +591,7 @@ def send_credit.Session.make_room_loop1_loop0.body
   else ok (done (first, s))
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::make_room]: loop 2:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 347:12-355:13 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 347:12-355:13 -/
 @[rust_loop]
 def send_credit.Session.make_room_loop1_loop0
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
@@ -589,7 +604,7 @@ def send_credit.Session.make_room_loop1_loop0
     (first, s)
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::make_room]: loop body 1:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 343:8-373:9 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 343:8-373:9 -/
 @[rust_loop_body]
 def send_credit.Session.make_room_loop1.body
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
@@ -661,7 +676,7 @@ def send_credit.Session.make_room_loop1.body
              }, out2, a1, true))
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::make_room]: loop 1:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 343:8-373:9 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 343:8-373:9 -/
 @[rust_loop]
 def send_credit.Session.make_room_loop1
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
@@ -676,7 +691,7 @@ def send_credit.Session.make_room_loop1
     (self, out, owed, changed)
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::make_room]:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 334:4-374:5 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 334:4-374:5 -/
 def send_credit.Session.make_room
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
   (out : alloc.vec.Vec send_credit.Output) :
@@ -688,7 +703,7 @@ def send_credit.Session.make_room
   send_credit.Session.make_room_loop1 self1 out owed1 false
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::join]:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 377:4-383:5 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 377:4-383:5 -/
 def send_credit.Session.join
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
   (s : Std.Usize) (k : Std.U8) :
@@ -703,7 +718,7 @@ def send_credit.Session.join
   ok { self with subs := a, arrivals := i }
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::leave]:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 387:4-400:5 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 387:4-400:5 -/
 def send_credit.Session.leave
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
   (s : Std.Usize) (out : alloc.vec.Vec send_credit.Output) :
@@ -764,7 +779,7 @@ def send_credit.Session.leave
   else ok ({ self with subs := a, resets := i }, out)
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::open]:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 404:4-411:5 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 404:4-411:5 -/
 def send_credit.Session.open
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
   (s : Std.Usize) (k : Std.U8) (out : alloc.vec.Vec send_credit.Output) :
@@ -781,7 +796,7 @@ def send_credit.Session.open
   ok ({ self with subs := a1, opened := i }, out1)
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::poll_open]:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 414:4-451:5 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 414:4-451:5 -/
 def send_credit.Session.poll_open
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
   (s : Std.Usize) (out : alloc.vec.Vec send_credit.Output) :
@@ -888,7 +903,7 @@ def send_credit.Session.poll_open
         else ok (b1, self2, out1)
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::stuck]: loop body 0:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 461:8-471:5
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 461:8-471:5
     Visibility: public -/
 @[rust_loop_body]
 def send_credit.Session.stuck_loop.body
@@ -914,7 +929,7 @@ def send_credit.Session.stuck_loop.body
   else ok (done held)
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::stuck]: loop 0:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 461:8-471:5
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 461:8-471:5
     Visibility: public -/
 @[rust_loop]
 def send_credit.Session.stuck_loop
@@ -927,7 +942,7 @@ def send_credit.Session.stuck_loop
     (held, j)
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::stuck]:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 455:4-471:5
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 455:4-471:5
     Visibility: public -/
 def send_credit.Session.stuck
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
@@ -940,7 +955,7 @@ def send_credit.Session.stuck
   | some w => send_credit.Session.stuck_loop self s w false 0#usize
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::admits]:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 476:4-481:5
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 476:4-481:5
     Visibility: public -/
 def send_credit.Session.admits
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
@@ -977,7 +992,7 @@ def send_credit.Session.admits
       else ok false
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::cursor]:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 485:4-499:5 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 485:4-499:5 -/
 def send_credit.Session.cursor
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
   (s : Std.Usize) (k : Std.U8) (out : alloc.vec.Vec send_credit.Output) :
@@ -1013,7 +1028,7 @@ def send_credit.Session.cursor
       ok ({ self1 with subs := a1 }, out3)
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::taken]: loop body 0:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 547:8-552:9 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 544:8-549:9 -/
 @[rust_loop_body]
 def send_credit.Session.taken_loop.body
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
@@ -1044,7 +1059,7 @@ def send_credit.Session.taken_loop.body
   else ok (done taken)
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::taken]: loop 0:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 547:8-552:9 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 544:8-549:9 -/
 @[rust_loop]
 def send_credit.Session.taken_loop
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
@@ -1056,7 +1071,7 @@ def send_credit.Session.taken_loop
     (taken, j)
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::taken]:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 544:4-554:5 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 541:4-551:5 -/
 @[reducible]
 def send_credit.Session.taken
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
@@ -1066,9 +1081,9 @@ def send_credit.Session.taken
   send_credit.Session.taken_loop self s 0#u16 0#usize
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::poll]: loop body 0:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 515:8-520:9 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 515:8-520:9 -/
 @[rust_loop_body]
-def send_credit.Session.poll_loop0.body
+def send_credit.Session.poll_loop.body
   {S : Std.Usize} {G : Std.Usize} (s : Std.Usize) (cached : Std.U16)
   (next : send_credit.Session S G) (ready : Bool) (j : Std.Usize) :
   Result (ControlFlow (Bool × Std.Usize) Bool)
@@ -1093,84 +1108,20 @@ def send_credit.Session.poll_loop0.body
   else ok (done ready)
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::poll]: loop 0:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 515:8-520:9 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 515:8-520:9 -/
 @[rust_loop]
-def send_credit.Session.poll_loop0
+def send_credit.Session.poll_loop
   {S : Std.Usize} {G : Std.Usize} (s : Std.Usize) (cached : Std.U16)
   (next : send_credit.Session S G) (ready : Bool) (j : Std.Usize) :
   Result Bool
   := do
   loop
-    (fun (ready1, j1) => send_credit.Session.poll_loop0.body s cached next
+    (fun (ready1, j1) => send_credit.Session.poll_loop.body s cached next
       ready1 j1)
     (ready, j)
 
-/-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::poll]: loop body 1:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 536:8-539:9 -/
-@[rust_loop_body]
-def send_credit.Session.poll_loop1.body
-  (scratch : alloc.vec.Vec send_credit.Output)
-  (out : alloc.vec.Vec send_credit.Output) (i : Std.Usize) :
-  Result (ControlFlow ((alloc.vec.Vec send_credit.Output) × Std.Usize)
-    (alloc.vec.Vec send_credit.Output))
-  := do
-  let i1 := alloc.vec.Vec.len scratch
-  if i < i1
-  then
-    let o ←
-      alloc.vec.Vec.index (core.slice.index.SliceIndexUsizeSlice
-        send_credit.Output) scratch i
-    let out1 ← alloc.vec.Vec.push out o
-    let i2 ← i + 1#usize
-    ok (cont (out1, i2))
-  else ok (done out)
-
-/-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::poll]: loop 1:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 536:8-539:9 -/
-@[rust_loop]
-def send_credit.Session.poll_loop1
-  (out : alloc.vec.Vec send_credit.Output)
-  (scratch : alloc.vec.Vec send_credit.Output) (i : Std.Usize) :
-  Result (alloc.vec.Vec send_credit.Output)
-  := do
-  loop
-    (fun (out1, i1) => send_credit.Session.poll_loop1.body scratch out1 i1)
-    (out, i)
-
-/-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::poll]: loop body 2:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 536:8-539:9 -/
-@[rust_loop_body]
-def send_credit.Session.poll_loop2.body
-  (scratch : alloc.vec.Vec send_credit.Output)
-  (out : alloc.vec.Vec send_credit.Output) (i : Std.Usize) :
-  Result (ControlFlow ((alloc.vec.Vec send_credit.Output) × Std.Usize)
-    (alloc.vec.Vec send_credit.Output))
-  := do
-  let i1 := alloc.vec.Vec.len scratch
-  if i < i1
-  then
-    let o ←
-      alloc.vec.Vec.index (core.slice.index.SliceIndexUsizeSlice
-        send_credit.Output) scratch i
-    let out1 ← alloc.vec.Vec.push out o
-    let i2 ← i + 1#usize
-    ok (cont (out1, i2))
-  else ok (done out)
-
-/-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::poll]: loop 2:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 536:8-539:9 -/
-@[rust_loop]
-def send_credit.Session.poll_loop2
-  (out : alloc.vec.Vec send_credit.Output)
-  (scratch : alloc.vec.Vec send_credit.Output) (i : Std.Usize) :
-  Result (alloc.vec.Vec send_credit.Output)
-  := do
-  loop
-    (fun (out1, i1) => send_credit.Session.poll_loop2.body scratch out1 i1)
-    (out, i)
-
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::poll]:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 503:4-541:5 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 503:4-538:5 -/
 def send_credit.Session.poll
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
   (s : Std.Usize) (cached : Std.U16) (pick : Option Std.U8)
@@ -1186,7 +1137,7 @@ def send_credit.Session.poll
     let (changed, self1, scratch) ←
       send_credit.Session.poll_open self s (alloc.vec.Vec.new
         send_credit.Output)
-    let ready ← send_credit.Session.poll_loop0 s cached self1 false 0#usize
+    let ready ← send_credit.Session.poll_loop s cached self1 false 0#usize
     if ready
     then
       match pick with
@@ -1210,8 +1161,10 @@ def send_credit.Session.poll
               then
                 let (next, scratch1) ←
                   send_credit.Session.cursor self1 s k scratch
+                let s1 := alloc.vec.Vec.deref scratch1
                 let out1 ←
-                  send_credit.Session.poll_loop1 out scratch1 0#usize
+                  alloc.vec.Vec.extend_from_slice
+                    send_credit.Output.Insts.CoreCloneClone out s1
                 ok (core.result.Result.Ok (), next, out1)
               else ok (core.result.Result.Err (), self, out)
     else
@@ -1219,11 +1172,14 @@ def send_credit.Session.poll
         if changed
         then ok scratch
         else alloc.vec.Vec.push scratch (send_credit.Output.Park s)
-      let out1 ← send_credit.Session.poll_loop2 out scratch1 0#usize
+      let s1 := alloc.vec.Vec.deref scratch1
+      let out1 ←
+        alloc.vec.Vec.extend_from_slice send_credit.Output.Insts.CoreCloneClone
+          out s1
       ok (core.result.Result.Ok (), self1, out1)
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::finished]:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 557:4-564:5 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 554:4-561:5 -/
 def send_credit.Session.finished
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
   (s : Std.Usize) (k : Std.U8) (out : alloc.vec.Vec send_credit.Output) :
@@ -1253,7 +1209,7 @@ def send_credit.Session.finished
       else ok (core.result.Result.Err (), self, out)
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::freed]: loop body 0:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 573:8-579:9 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 570:8-576:9 -/
 @[rust_loop_body]
 def send_credit.Session.impl.freed_loop.body
   {S : Std.Usize} {G : Std.Usize} (s : send_credit.Shape S) (i : Std.U8)
@@ -1289,7 +1245,7 @@ def send_credit.Session.impl.freed_loop.body
   else ok (done (a, out))
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::freed]: loop 0:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 573:8-579:9 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 570:8-576:9 -/
 @[rust_loop]
 def send_credit.Session.impl.freed_loop
   {S : Std.Usize} {G : Std.Usize} (s : send_credit.Shape S)
@@ -1303,7 +1259,7 @@ def send_credit.Session.impl.freed_loop
     (a, out, s1)
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::freed]:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 567:4-581:5 -/
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 564:4-578:5 -/
 def send_credit.Session.impl.freed
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
   (out : alloc.vec.Vec send_credit.Output) :
@@ -1320,7 +1276,7 @@ def send_credit.Session.impl.freed
     ok (core.result.Result.Ok (), { self with subs := a, freed := i }, out1)
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::step]:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 584:4-591:5
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 581:4-588:5
     Visibility: public -/
 def send_credit.Session.step
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
@@ -1340,7 +1296,7 @@ def send_credit.Session.step
   | send_credit.Event.Freed => send_credit.Session.impl.freed self out
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::within_credit]:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 594:4-596:5
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 591:4-593:5
     Visibility: public -/
 def send_credit.Session.within_credit
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G) :
@@ -1353,7 +1309,7 @@ def send_credit.Session.within_credit
   ok (i <= i3)
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::well_formed]: loop body 0:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 602:8-612:5
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 599:8-609:5
     Visibility: public -/
 @[rust_loop_body]
 def send_credit.Session.well_formed_loop.body
@@ -1393,7 +1349,7 @@ def send_credit.Session.well_formed_loop.body
     else ok (done false)
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::well_formed]: loop 0:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 602:8-612:5
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 599:8-609:5
     Visibility: public -/
 @[rust_loop]
 def send_credit.Session.well_formed_loop
@@ -1406,7 +1362,7 @@ def send_credit.Session.well_formed_loop
     s
 
 /-- [kio_pure_machine::send_credit::{kio_pure_machine::send_credit::Session<S, G>}::well_formed]:
-    Source: 'spikes/pure-machine/src/send_credit.rs', lines 600:4-612:5
+    Source: 'lab/pure-machine/src/send_credit.rs', lines 597:4-609:5
     Visibility: public -/
 @[reducible]
 def send_credit.Session.well_formed
@@ -1416,13 +1372,13 @@ def send_credit.Session.well_formed
   send_credit.Session.well_formed_loop self 0#usize
 
 /-- [kio_pure_machine::warm_settle::NO_RANK]
-    Source: 'spikes/pure-machine/src/warm_settle.rs', lines 19:0-19:34
+    Source: 'lab/pure-machine/src/warm_settle.rs', lines 19:0-19:34
     Visibility: public -/
 @[global_simps, irreducible]
 def warm_settle.NO_RANK : Std.U32 := core.num.U32.MAX
 
 /-- [kio_pure_machine::warm_settle::{impl core::cmp::PartialEq<kio_pure_machine::warm_settle::Pull> for kio_pure_machine::warm_settle::Pull}::eq]:
-    Source: 'spikes/pure-machine/src/warm_settle.rs', lines 78:29-78:38
+    Source: 'lab/pure-machine/src/warm_settle.rs', lines 78:29-78:38
     Visibility: public -/
 def warm_settle.Pull.Insts.CoreCmpPartialEqPull.eq
   (self : warm_settle.Pull) (other : warm_settle.Pull) : Result Bool := do
@@ -1431,7 +1387,7 @@ def warm_settle.Pull.Insts.CoreCmpPartialEqPull.eq
   ok (self1 = other1)
 
 /-- [kio_pure_machine::warm_settle::better]:
-    Source: 'spikes/pure-machine/src/warm_settle.rs', lines 105:0-107:1
+    Source: 'lab/pure-machine/src/warm_settle.rs', lines 105:0-107:1
     Visibility: public -/
 def warm_settle.better
   (a : warm_settle.Choice) (b : warm_settle.Choice) : Result Bool := do
@@ -1453,7 +1409,7 @@ def warm_settle.better
     else ok false
 
 /-- [kio_pure_machine::warm_settle::best]: loop body 0:
-    Source: 'spikes/pure-machine/src/warm_settle.rs', lines 113:4-120:5
+    Source: 'lab/pure-machine/src/warm_settle.rs', lines 113:4-120:5
     Visibility: public -/
 @[rust_loop_body]
 def warm_settle.best_loop.body
@@ -1480,7 +1436,7 @@ def warm_settle.best_loop.body
   else ok (done best)
 
 /-- [kio_pure_machine::warm_settle::best]: loop 0:
-    Source: 'spikes/pure-machine/src/warm_settle.rs', lines 113:4-120:5
+    Source: 'lab/pure-machine/src/warm_settle.rs', lines 113:4-120:5
     Visibility: public -/
 @[rust_loop]
 def warm_settle.best_loop
@@ -1493,7 +1449,7 @@ def warm_settle.best_loop
     (best, i)
 
 /-- [kio_pure_machine::warm_settle::best]:
-    Source: 'spikes/pure-machine/src/warm_settle.rs', lines 110:0-122:1
+    Source: 'lab/pure-machine/src/warm_settle.rs', lines 110:0-122:1
     Visibility: public -/
 @[reducible]
 def warm_settle.best
@@ -1503,20 +1459,20 @@ def warm_settle.best
   warm_settle.best_loop choices none 0#usize
 
 /-- [kio_pure_machine::warm_settle::is]:
-    Source: 'spikes/pure-machine/src/warm_settle.rs', lines 160:0-165:1 -/
+    Source: 'lab/pure-machine/src/warm_settle.rs', lines 160:0-165:1 -/
 def warm_settle.is (x : Option Std.U8) (v : Std.U8) : Result Bool := do
   match x with
   | none => ok false
   | some y => ok (y = v)
 
 /-- [kio_pure_machine::warm_settle::bit]:
-    Source: 'spikes/pure-machine/src/warm_settle.rs', lines 167:0-169:1 -/
+    Source: 'lab/pure-machine/src/warm_settle.rs', lines 167:0-169:1 -/
 def warm_settle.bit (r : Std.U8) : Result Std.U16 := do
   let i ← r - 1#u8
   1#u16 <<< i
 
 /-- [kio_pure_machine::warm_settle::{kio_pure_machine::warm_settle::Relay<N>}::link]:
-    Source: 'spikes/pure-machine/src/warm_settle.rs', lines 172:4-174:5 -/
+    Source: 'lab/pure-machine/src/warm_settle.rs', lines 172:4-174:5 -/
 def warm_settle.Relay.link
   {N : Std.Usize} (self : warm_settle.Relay N) (r : Std.U8) :
   Result (Option warm_settle.Link)
@@ -1526,7 +1482,7 @@ def warm_settle.Relay.link
   Array.index_usize self.links i1
 
 /-- [kio_pure_machine::warm_settle::{kio_pure_machine::warm_settle::Relay<N>}::heard]:
-    Source: 'spikes/pure-machine/src/warm_settle.rs', lines 176:4-178:5 -/
+    Source: 'lab/pure-machine/src/warm_settle.rs', lines 176:4-178:5 -/
 def warm_settle.Relay.impl.heard
   {N : Std.Usize} (self : warm_settle.Relay N) (r : Std.U8) :
   Result warm_settle.Heard
@@ -1536,7 +1492,7 @@ def warm_settle.Relay.impl.heard
   Array.index_usize self.heard i1
 
 /-- [kio_pure_machine::warm_settle::{kio_pure_machine::warm_settle::Relay<N>}::is_open]:
-    Source: 'spikes/pure-machine/src/warm_settle.rs', lines 180:4-182:5 -/
+    Source: 'lab/pure-machine/src/warm_settle.rs', lines 180:4-182:5 -/
 def warm_settle.Relay.is_open
   {N : Std.Usize} (self : warm_settle.Relay N) (r : Std.U8) : Result Bool := do
   let o ← warm_settle.Relay.link self r
@@ -1547,7 +1503,7 @@ def warm_settle.Relay.is_open
               else ok false
 
 /-- [kio_pure_machine::warm_settle::{kio_pure_machine::warm_settle::Relay<N>}::down]:
-    Source: 'spikes/pure-machine/src/warm_settle.rs', lines 185:4-187:5
+    Source: 'lab/pure-machine/src/warm_settle.rs', lines 185:4-187:5
     Visibility: public -/
 def warm_settle.Relay.down
   {N : Std.Usize} (self : warm_settle.Relay N) (c : Std.U8) : Result Bool := do
@@ -1559,7 +1515,7 @@ def warm_settle.Relay.down
   else ok false
 
 /-- [kio_pure_machine::warm_settle::{kio_pure_machine::warm_settle::Relay<N>}::demand]: loop body 0:
-    Source: 'spikes/pure-machine/src/warm_settle.rs', lines 195:8-202:5
+    Source: 'lab/pure-machine/src/warm_settle.rs', lines 195:8-202:5
     Visibility: public -/
 @[rust_loop_body]
 def warm_settle.Relay.demand_loop.body
@@ -1591,7 +1547,7 @@ def warm_settle.Relay.demand_loop.body
   else ok (done false)
 
 /-- [kio_pure_machine::warm_settle::{kio_pure_machine::warm_settle::Relay<N>}::demand]: loop 0:
-    Source: 'spikes/pure-machine/src/warm_settle.rs', lines 195:8-202:5
+    Source: 'lab/pure-machine/src/warm_settle.rs', lines 195:8-202:5
     Visibility: public -/
 @[rust_loop]
 def warm_settle.Relay.demand_loop
@@ -1606,7 +1562,7 @@ def warm_settle.Relay.demand_loop
     c
 
 /-- [kio_pure_machine::warm_settle::{kio_pure_machine::warm_settle::Relay<N>}::demand]:
-    Source: 'spikes/pure-machine/src/warm_settle.rs', lines 190:4-202:5
+    Source: 'lab/pure-machine/src/warm_settle.rs', lines 190:4-202:5
     Visibility: public -/
 def warm_settle.Relay.demand
   {N : Std.Usize} (self : warm_settle.Relay N) : Result Bool := do
@@ -1618,7 +1574,7 @@ def warm_settle.Relay.demand
       self.heard self.up self.next self.answered 1#u8
 
 /-- [kio_pure_machine::warm_settle::{kio_pure_machine::warm_settle::Relay<N>}::mine]: loop body 0:
-    Source: 'spikes/pure-machine/src/warm_settle.rs', lines 212:8-220:9
+    Source: 'lab/pure-machine/src/warm_settle.rs', lines 212:8-220:9
     Visibility: public -/
 @[rust_loop_body]
 def warm_settle.Relay.mine_loop.body
@@ -1670,7 +1626,7 @@ def warm_settle.Relay.mine_loop.body
   else ok (done rank)
 
 /-- [kio_pure_machine::warm_settle::{kio_pure_machine::warm_settle::Relay<N>}::mine]: loop 0:
-    Source: 'spikes/pure-machine/src/warm_settle.rs', lines 212:8-220:9
+    Source: 'lab/pure-machine/src/warm_settle.rs', lines 212:8-220:9
     Visibility: public -/
 @[rust_loop]
 def warm_settle.Relay.mine_loop
@@ -1686,7 +1642,7 @@ def warm_settle.Relay.mine_loop
     (rank, d)
 
 /-- [kio_pure_machine::warm_settle::{kio_pure_machine::warm_settle::Relay<N>}::mine]:
-    Source: 'spikes/pure-machine/src/warm_settle.rs', lines 206:4-222:5
+    Source: 'lab/pure-machine/src/warm_settle.rs', lines 206:4-222:5
     Visibility: public -/
 def warm_settle.Relay.mine
   {N : Std.Usize} (self : warm_settle.Relay N) : Result Std.U32 := do
@@ -1698,7 +1654,7 @@ def warm_settle.Relay.mine
     self.up self.next self.answered rank 1#u8
 
 /-- [kio_pure_machine::warm_settle::{kio_pure_machine::warm_settle::Relay<N>}::pull]:
-    Source: 'spikes/pure-machine/src/warm_settle.rs', lines 225:4-233:5
+    Source: 'lab/pure-machine/src/warm_settle.rs', lines 225:4-233:5
     Visibility: public -/
 def warm_settle.Relay.pull
   {N : Std.Usize} (self : warm_settle.Relay N) (s : Std.U8) :
@@ -1727,7 +1683,7 @@ def warm_settle.Relay.pull
   | warm_settle.Answer.Lost => ok warm_settle.Pull.Lost
 
 /-- [kio_pure_machine::warm_settle::{kio_pure_machine::warm_settle::Relay<N>}::options]: loop body 0:
-    Source: 'spikes/pure-machine/src/warm_settle.rs', lines 252:8-276:9
+    Source: 'lab/pure-machine/src/warm_settle.rs', lines 252:8-276:9
     Visibility: public -/
 @[rust_loop_body]
 def warm_settle.Relay.options_loop.body
@@ -1857,7 +1813,7 @@ def warm_settle.Relay.options_loop.body
   else ok (done choices)
 
 /-- [kio_pure_machine::warm_settle::{kio_pure_machine::warm_settle::Relay<N>}::options]: loop 0:
-    Source: 'spikes/pure-machine/src/warm_settle.rs', lines 252:8-276:9
+    Source: 'lab/pure-machine/src/warm_settle.rs', lines 252:8-276:9
     Visibility: public -/
 @[rust_loop]
 def warm_settle.Relay.options_loop
@@ -1874,7 +1830,7 @@ def warm_settle.Relay.options_loop
     (choices, s)
 
 /-- [kio_pure_machine::warm_settle::{kio_pure_machine::warm_settle::Relay<N>}::options]:
-    Source: 'spikes/pure-machine/src/warm_settle.rs', lines 238:4-278:5
+    Source: 'lab/pure-machine/src/warm_settle.rs', lines 238:4-278:5
     Visibility: public -/
 def warm_settle.Relay.options
   {N : Std.Usize} (self : warm_settle.Relay N) (u : Option Std.U8) :
@@ -1900,7 +1856,7 @@ def warm_settle.Relay.options
     self.up self.next self.answered u mine choices 1#u8
 
 /-- [kio_pure_machine::warm_settle::toward]:
-    Source: 'spikes/pure-machine/src/warm_settle.rs', lines 317:0-323:1 -/
+    Source: 'lab/pure-machine/src/warm_settle.rs', lines 317:0-323:1 -/
 def warm_settle.toward
   (u : Std.U8) (x : Option Std.U8) (t : Option Std.U8) :
   Result ((Option Std.U8) × (Option Std.U8))
@@ -1917,7 +1873,7 @@ def warm_settle.toward
       else ok (some u, t)
 
 /-- [kio_pure_machine::warm_settle::{kio_pure_machine::warm_settle::Relay<N>}::decide]:
-    Source: 'spikes/pure-machine/src/warm_settle.rs', lines 283:4-297:5 -/
+    Source: 'lab/pure-machine/src/warm_settle.rs', lines 283:4-297:5 -/
 def warm_settle.Relay.decide
   {N : Std.Usize} (self : warm_settle.Relay N) (u : Option Std.U8)
   (x : Option Std.U8) :
@@ -1949,7 +1905,7 @@ def warm_settle.Relay.decide
       else ok (best, none)
 
 /-- [kio_pure_machine::warm_settle::{kio_pure_machine::warm_settle::Relay<N>}::next_pulls]:
-    Source: 'spikes/pure-machine/src/warm_settle.rs', lines 300:4-313:5
+    Source: 'lab/pure-machine/src/warm_settle.rs', lines 300:4-313:5
     Visibility: public -/
 def warm_settle.Relay.next_pulls
   {N : Std.Usize} (self : warm_settle.Relay N) :

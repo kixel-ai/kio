@@ -2,7 +2,7 @@
 # Translate the pure machines to Lean with Charon and Aeneas, fail if the translation in
 # proofs/PureMachine differs from it, then check every proof in proofs/.
 #
-# Usage: nix develop .#prove --command spikes/pure-machine/prove.sh
+# Usage: nix develop .#prove --command lab/pure-machine/prove.sh
 # With --write, replace the committed translation instead of failing on a difference.
 set -euo pipefail
 
