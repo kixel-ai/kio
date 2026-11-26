@@ -18,7 +18,7 @@
 //!
 //! The `runtime` feature arms timers on tokio's clock. Without it, reads fall back
 //! to std, and waiting on the host clock panics. With `KIO_DENY_HOST_TIMERS=1` in the
-//! environment, a host timer that waits aborts the process, so a test that waits on
+//! environment, a host timer that waits exits the process, so a test that waits on
 //! real time fails every run; one that needs real time calls [`host_time`].
 //!
 //! The `manual` feature adds `Manual::install`, which makes a [`Manual`] clock

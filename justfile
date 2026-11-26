@@ -4,21 +4,20 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 default:
     @just --list
 
-# Lint the workspace, feature matrix, workflows, TOML, Nix, and quest tree.
+# Lint the workspace, feature matrix, unused dependencies, workflows, TOML, Nix, and quest tree.
 check:
-    cargo clippy --locked --workspace --all-targets -- -D warnings
+    cargo shear --locked --deny-warnings
+    cargo clippy --locked --workspace --all-features --all-targets -- -D warnings
     cargo clippy --locked -p kio --no-default-features -- -D warnings
-    cargo clippy --locked -p kio --all-features --all-targets -- -D warnings
     cargo fmt --all --check
     actionlint
     taplo format --check
     nixfmt --check flake.nix
     quest check
 
-# Run unit, doc, and trybuild UI tests across the workspace, aborting on any host-clock timer.
+# Run unit, doc, and trybuild UI tests across the workspace, failing on any host-clock timer.
 test *args:
-    KIO_DENY_HOST_TIMERS=1 cargo test --locked --workspace {{ args }}
-    KIO_DENY_HOST_TIMERS=1 cargo test --locked --doc -p kio --all-features
+    KIO_DENY_HOST_TIMERS=1 cargo test --locked --workspace --all-features {{ args }}
 
 # Run what CI runs: lint, then test.
 ci: check test
