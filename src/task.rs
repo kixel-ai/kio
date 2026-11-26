@@ -503,7 +503,9 @@ impl<T: Task<Output = ()>> Tasks<T> {
 	/// woken by another (or pushed) during a pass runs in the next pass. Each pass
 	/// still snapshots before running anything, so a chain deeper than the budget,
 	/// or a task that wakes itself every poll, takes `budget` steps and leaves the
-	/// rest to the next call, waking the owner as [`poll`](Self::poll) does.
+	/// rest to the next call, waking the owner as [`poll`](Self::poll) does. Under a
+	/// `sim` schedule other than FIFO, a pass cut short to let another task run ends
+	/// the call the same way.
 	///
 	/// For an owner that runs its set until it is quiet before blocking, such as
 	/// an executor's turn. Run the call inside the owner's [`Waiter::batch`], or
@@ -555,18 +557,19 @@ impl<T: Task> Tasks<T> {
 			// every pass swaps. A plain load on either side would be the
 			// store-buffering (Dekker) shape that loses wakes, so keep both sides RMWs.
 			self.shared.pending.store(false, Ordering::Release);
-			self.pass(done);
+			let split = self.pass(done);
 			ran += 1;
 			// A `true` this misses belongs to a waker that saw `false` and woke the parent.
-			if ran == budget.get() || !self.shared.pending.load(Ordering::Acquire) {
+			if split || ran == budget.get() || !self.shared.pending.load(Ordering::Acquire) {
 				return ran;
 			}
 		}
 	}
 
-	/// Run every task woken before the pass began.
+	/// Run every task woken before the pass began, returning whether the simulator left
+	/// some for the owner's next poll, which must then return so another task runs first.
 	#[cfg_attr(feature = "sim", track_caller)]
-	fn pass(&mut self, done: &mut impl FnMut(T, T::Output)) {
+	fn pass(&mut self, done: &mut impl FnMut(T, T::Output)) -> bool {
 		// One snapshot per pass, taken in full before any task runs:
 		// `swap(0)` takes the woken bits and clears them, so a task woken
 		// during the pass (by another task or a self-wake) lands in the next
@@ -600,9 +603,9 @@ impl<T: Task> Tasks<T> {
 
 		#[cfg(feature = "sim")]
 		if let Some(children) = crate::clock::sim::children() {
-			self.pass_scheduled(&children, &scratch, done);
+			let split = self.pass_scheduled(&children, &scratch, done);
 			self.scratch = scratch;
-			return;
+			return split;
 		}
 
 		let slots = self.children.len();
@@ -657,19 +660,20 @@ impl<T: Task> Tasks<T> {
 			}
 		}
 		self.scratch = scratch;
+		false
 	}
 
 	/// [`pass`](Self::pass) as the simulator schedules it: the children woken in
 	/// `scratch`, or every child while it probes for lost wakeups, in the order it
 	/// picks. Those it leaves are woken again for the owner's next poll, so another task
-	/// may run in between.
+	/// may run in between; returns whether it left any.
 	#[cfg(feature = "sim")]
 	fn pass_scheduled(
 		&mut self,
 		children: &crate::clock::sim::Children,
 		scratch: &[(usize, u64)],
 		done: &mut impl FnMut(T, T::Output),
-	) {
+	) -> bool {
 		let mut woken: Vec<usize> = match children.probing() {
 			true => (0..self.children.len()).collect(),
 			false => scratch
@@ -697,7 +701,7 @@ impl<T: Task> Tasks<T> {
 			for index in woken {
 				self.poll_scheduled(children, index, done);
 			}
-			return;
+			return false;
 		}
 
 		let mut priorities: Vec<_> = woken
@@ -710,13 +714,14 @@ impl<T: Task> Tasks<T> {
 				for index in woken {
 					self.wakers[index].wake_by_ref();
 				}
-				return;
+				return true;
 			};
 			priorities.remove(pick);
 			let index = woken.remove(pick);
 			ran = true;
 			yielded |= self.poll_scheduled(children, index, done);
 		}
+		false
 	}
 
 	/// Poll the child in slot `index` for [`pass_scheduled`](Self::pass_scheduled),

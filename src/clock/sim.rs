@@ -80,6 +80,11 @@ pub(crate) fn event() {
 	let _ = EVENTS.try_with(|events| events.set(events.get().wrapping_add(1)));
 }
 
+/// Whether a probe is re-polling parked tasks, which must not count a budget's yield.
+pub(crate) fn probing() -> bool {
+	PROBING.get()
+}
+
 fn events() -> u64 {
 	EVENTS.get()
 }
@@ -1744,6 +1749,20 @@ mod tests {
 		});
 	}
 
+	/// A budget spent on the poll that parked the task does not wake it when probed.
+	#[test]
+	fn the_probe_ignores_a_spent_budget() {
+		run_with(0, probing(), async {
+			let mut budget = crate::coop::Budget::new(1);
+			let mut sleep = Box::pin(crate::clock::sleep(Duration::from_secs(1)));
+			crate::wait(|waiter| {
+				std::task::ready!(budget.poll_yield(waiter));
+				waiter.poll_future(sleep.as_mut())
+			})
+			.await;
+		});
+	}
+
 	#[test]
 	#[should_panic(expected = "in its kio::Tasks child in slot 1 pushed at src/clock/sim.rs")]
 	fn the_probe_blames_a_task_set_child() {
@@ -1852,6 +1871,40 @@ mod tests {
 				});
 			}
 		}
+	}
+
+	/// A pass the schedule cuts short ends a multi-pass poll, so another task may run
+	/// before the children it left.
+	#[test]
+	fn a_split_pass_returns_to_the_executor() {
+		let interleaved = (0..20).any(|seed| {
+			run_with(seed, random(), async {
+				let other = Rc::new(Cell::new(false));
+				drop(spawn({
+					let other = other.clone();
+					async move { other.set(true) }
+				}));
+				let saw = Rc::new(Cell::new(false));
+				let mut tasks = crate::Tasks::new();
+				for _ in 0..2 {
+					let (other, saw) = (other.clone(), saw.clone());
+					tasks.push(move |_: &crate::Waiter| {
+						saw.set(saw.get() | other.get());
+						Poll::Ready(())
+					});
+				}
+				crate::wait(|waiter| {
+					waiter.batch(|| tasks.poll_passes(waiter, std::num::NonZeroUsize::new(8).unwrap()));
+					match tasks.is_empty() {
+						true => Poll::Ready(()),
+						false => Poll::Pending,
+					}
+				})
+				.await;
+				saw.get()
+			})
+		});
+		assert!(interleaved, "no seed ran the other task between the children");
 	}
 
 	/// A task woken while it runs, then yielding, still goes behind a task woken after it.
