@@ -1,0 +1,85 @@
+name: Post-merge
+
+# Slow and cross-platform lanes kept off the PR gate. A failure files an issue instead of
+# blocking a merge. Runs coalesce: a started run finishes and reports, while queued runs
+# collapse into the newest.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: post-merge
+  cancel-in-progress: false
+
+jobs:
+  # The platform-specific clock backends.
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Installs the toolchain rust-toolchain.toml pins.
+      - run: rustup toolchain install
+      - run: cargo test --locked --workspace --all-features
+
+  miri:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: nightly
+          components: miri, rust-src
+      - uses: taiki-e/install-action@893d6ee8d714b6c7dfe2bcd94e5759e9a7958a7e # v2.90.10
+        with:
+          tool: just
+      - run: just miri
+        env:
+          # Overrides rust-toolchain.toml's stable pin.
+          RUSTUP_TOOLCHAIN: nightly
+
+  # Criterion's test mode runs each bench once, so a panicking bench fails here.
+  bench:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - run: cargo test --locked -p kio --benches
+
+  report:
+    needs: [test, miri, bench]
+    if: failure()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TITLE: Post-merge CI failed
+          BODY: "Post-merge failed on ${{ github.sha }}: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        run: |
+          issue=$(gh issue list --state open --search "in:title \"$TITLE\"" --json number,title \
+            --jq "map(select(.title == \"$TITLE\")) | first | .number // empty")
+          if [ -n "$issue" ]; then
+            gh issue comment "$issue" --body "$BODY"
+          else
+            gh issue create --title "$TITLE" --body "$BODY"
+          fi
