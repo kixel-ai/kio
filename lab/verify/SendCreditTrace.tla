@@ -17,7 +17,6 @@ TraceInit ==
     /\ t \in 1..Len(Traces)
     /\ i = 1
     /\ v = ToV(Traces[t][1])
-    /\ Init
 
 TraceNext ==
     /\ i < Len(Traces[t])
@@ -29,6 +28,10 @@ TraceNext ==
 Done == i = Len(Traces[t]) /\ UNCHANGED <<v, t, i>>
 
 TraceSpec == TraceInit /\ [][TraceNext \/ Done]_<<v, t, i>>
+
+\* Every trace starts in `Init`: an invariant rather than part of `TraceInit`, which would drop
+\* such a trace instead of failing it.
+StartsInit == i = 1 => Init
 
 \* Every state but a trace's last has its successor.
 Accepted == i < Len(Traces[t]) => ENABLED TraceNext

@@ -493,12 +493,12 @@ impl TrackRun {
 		w != 0 && held.peek().is_some() && held.all(|j| session.config.in_group(s, j) > session.config.in_group(s, w))
 	}
 
-	/// One pass as a hand-written `TrackRun::poll_step` makes it: the waiting open, then the
-	/// cursor.
+	/// The loop `poll_next` generates, written by hand: the waiting open, else the cursor.
 	pub fn poll_step(&mut self, waiter: &Waiter) -> Poll<()> {
-		let opened = self.open(waiter).is_ready();
-		let handed = self.hand_out(waiter).is_ready();
-		ready(opened || handed)
+		if self.open(waiter).is_ready() {
+			return Poll::Ready(());
+		}
+		self.hand_out(waiter)
 	}
 }
 

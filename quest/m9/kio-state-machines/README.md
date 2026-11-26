@@ -29,8 +29,8 @@ Keep every prototype behind an internal/experimental feature or test crate until
 
 Reactor spike results (`lab/`, `kio-macros`'s `unstable-reactor` feature), for the report:
 
-- Ergonomics: the macro is 248 lines; `SendCredit` is two reactors, `TrackRun` (`open`, `hand_out`) and `Peer` (`finish`, `free`), about 200 lines of actions over a 215-line session model. A hand-written `poll_step` over the same actions is 5 lines, so the macro buys the explorer surface, not brevity.
-- Runtime: `poll_next` compiles to the hand-written loop: 28.8k vs. 29.3k instructions per session driven to quiet (`perf stat`, 80k sessions, release, no `sim`).
+- Ergonomics: the macro is 248 lines; `SendCredit` is two reactors, `TrackRun` (`open`, `hand_out`) and `Peer` (`finish`, `free`), about 200 lines of actions over a 215-line session model. A hand-written `poll_step` over the same actions is 6 lines, so the macro buys the explorer surface, not brevity.
+- Runtime: `poll_next` costs what the same loop written by hand does: 28.8k instructions per session driven to quiet for both, within 0.01% (`perf stat`, 80k sessions, release, no `sim`).
 - Build: `unstable-reactor` adds 0.03 s to `kio-macros`; a `kio-lab` rebuild is 0.22 s.
 - Bugs: a missing `wake_head` is caught as a lost wakeup on `TrackRun[n].open` in 32-78% of seeds per config; a `give_way` that assumes `open` ran first panics in `hand_out` in 9-20% of seeds, and never under the priority order. Each seed takes 60-85 µs; 100k seeds reach 49-79% of the split spec's distinct states.
 - Trace validation: 200 runs per config replay in TLC in about 3 s each. The glue is a 50-line projection to the spec's `v`, a 38-line trace spec, and a 45-line `SendCreditSplit.tla`: the reactor's actions are finer than the spec's atomic `Step(s)`, so traces validate against the split refinement, which TLC checks against every rule in 5 s to 4.5 min per config (59k-441k states vs. the original's 42k-296k).

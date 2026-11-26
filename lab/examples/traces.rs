@@ -41,7 +41,7 @@ fn main() {
 		fs::write(
 			out.join("Trace.cfg"),
 			format!(
-				"{constants}\nSPECIFICATION TraceSpec\n\nINVARIANTS\n    Accepted\n    EndsQuiet\n    WithinCredit\n    Ends\n    TopDelivered\n\nCHECK_DEADLOCK FALSE\n"
+				"{constants}\nSPECIFICATION TraceSpec\n\nINVARIANTS\n    StartsInit\n    Accepted\n    EndsQuiet\n    WithinCredit\n    Ends\n    TopDelivered\n\nCHECK_DEADLOCK FALSE\n"
 			),
 		)
 		.expect("write Trace.cfg");
