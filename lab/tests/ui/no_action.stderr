@@ -1,0 +1,7 @@
+error: a #[reactor] needs at least one `#[action]`
+ --> tests/ui/no_action.rs:4:1
+  |
+4 | #[kio_macros::reactor]
+  | ^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `kio_macros::reactor` (in Nightly builds, run with -Z macro-backtrace for more info)

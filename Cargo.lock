@@ -650,6 +650,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "kio-lab"
+version = "0.0.0"
+dependencies = [
+ "kio",
+ "kio-lab",
+ "kio-macros",
+ "rand",
+ "trybuild",
+]
+
+[[package]]
 name = "kio-macros"
 version = "0.1.0"
 dependencies = [

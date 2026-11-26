@@ -22,6 +22,11 @@ ignored-paths = ["tests/ui/*.rs"]
 [lib]
 proc-macro = true
 
+[features]
+# `#[reactor]`, an experimental guarded-action macro, off until the state-machine spikes
+# settle its design.
+unstable-reactor = []
+
 [dependencies]
 proc-macro2 = "1"
 quote = "1"
