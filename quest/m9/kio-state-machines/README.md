@@ -19,18 +19,17 @@ Decided 2026-11-25 (maintainer, `/quest-plan` on designing async Rust for state-
 - ✅ Goal: prototype and compare candidate state-machine designs for `kio` on real `moq-net` protocol logic as internal lab spikes, leaving `kio::log` Verus proofs and `m4` TLA+ trace validation to their existing quests (rejected: narrowing to pure `StateMachine` only, narrowing to `kio`'s poll layer only, dropping the spikes).
 - ✅ Repo home: move `rs/kio` to `kixel-ai/kio` in `m1` first, then run these three spikes in `kixel-ai/kio`'s quest tree; plan the fourth approach (`rust2-lean` MIR extraction) in `kixel-ai/rust2`'s quest tree (rejected: putting all spikes in `rust2`, a fresh throwaway repo, keeping the spikes in `moq`'s `m9` lab first, putting MIR extraction inside `kio`).
 - ✅ Approaches: spike all four:
-  1. [Pure `StateMachine` + BFS + Kani/Aeneas](/quest/m9/kio-state-machines/pure-machine.md);
+  1. Pure `StateMachine` + BFS + Kani/Aeneas: done in `lab/pure-machine/` ([kixel-ai/kio#9](https://github.com/kixel-ai/kio/pull/9), whose description holds the numbers for the report);
   2. [`#[kio::reactor]` guarded-action macro](/quest/m9/kio-state-machines/reactor-macro.md);
   3. [Adversarial `kio::clock::sim` + `kio::Tasks` scheduler + lost-wakeup detector](/quest/m9/kio-state-machines/adversarial-sim.md);
   4. `rust2-lean` MIR extraction in `kixel-ai/rust2` (`quest/m2/lean-spike.md` there).
-- ✅ Benchmark targets: `SendCredit` (`rs/moq-net/verify/credit/SendCredit.tla`, 289 lines: stream-credit line, preemption, `give_way`, `stuck` cursor, `Line::wake_head`) across all three `kio` spikes, plus routing (`WarmSettle` from `rs/moq-net/verify/warm/WarmSettle.tla` / `rs/moq-net/src/route/tests/warm.rs`) for the Lean 4 (`rust2-lean` vs. Aeneas) comparison (rejected: `Reconnect` / `Handover` for the `kio` spikes, `WarmSettle` across every spike).
+- ✅ Benchmark targets: `SendCredit` ([`rs/moq-net/verify/credit/SendCredit.tla`](https://github.com/moq-dev/moq/blob/main/rs/moq-net/verify/credit/SendCredit.tla), 289 lines: stream-credit line, preemption, `give_way`, `stuck` cursor, `Line::wake_head`) across all three `kio` spikes, plus routing (`WarmSettle` from [`rs/moq-net/verify/warm/WarmSettle.tla`](https://github.com/moq-dev/moq/blob/main/rs/moq-net/verify/warm/WarmSettle.tla) / [`rs/moq-net/src/route/tests/warm.rs`](https://github.com/moq-dev/moq/blob/main/rs/moq-net/src/route/tests/warm.rs)) for the Lean 4 (`rust2-lean` vs. Aeneas) comparison (rejected: `Reconnect` / `Handover` for the `kio` spikes, `WarmSettle` across every spike).
 
-Keep every prototype behind an internal/experimental feature or test crate until the comparison report settles the public API.
+Keep every prototype behind an internal/experimental feature or test crate until the comparison report settles the public API. The `SendCredit` and `WarmSettle` fixtures are moq-net logic, so they live in tests or an unpublished workspace crate such as `lab/pure-machine/`, never in `kio`'s `src/`, since `AGENTS.md` keeps `kio` free of MoQ assumptions; only generic machinery (scheduler policy, `#[kio::reactor]`) may go behind a `kio` feature.
 
 Public API: none (lab spikes only). Wire: none.
 
 ## Related
 
-- [Spike: Verus proves kio::log's commit protocol as written](/quest/m9/verus-kio-log.md) - deductive proofs on `kio`'s unsafe lock-free internals
 - [Miri's GenMC mode explores every schedule of kio's lock-free code](/quest/m2/miri-genmc.md) - weak-memory schedule exploration for `kio`
 - `moq-dev/moq` external TLA+ trace validation quests ([subscribe](https://github.com/moq-dev/moq/blob/main/quest/m4/subscribe-trace-validation.md), [resume](https://github.com/moq-dev/moq/blob/main/quest/m4/resume-trace-validation.md), [reconnect](https://github.com/moq-dev/moq/blob/main/quest/m4/reconnect-trace-validation.md)) and [codec Kani](https://github.com/moq-dev/moq/blob/main/quest/m4/codec-kani.md)

@@ -4,22 +4,21 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 default:
     @just --list
 
-# Lint the workspace, feature matrix, rustdoc, workflows, TOML, Nix, and quest tree.
+# Lint the workspace, feature matrix, unused dependencies, rustdoc, workflows, TOML, Nix, and quest tree.
 check:
-    cargo clippy --locked --workspace --all-targets -- -D warnings
+    cargo shear --locked --deny-warnings
+    cargo clippy --locked --workspace --all-features --all-targets -- -D warnings
     cargo clippy --locked -p kio --no-default-features -- -D warnings
-    cargo clippy --locked -p kio --all-features --all-targets -- -D warnings
     cargo fmt --all --check
     RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --workspace --all-features
     actionlint
     taplo format --check
-    nixfmt --check flake.nix
+    nixfmt --check flake.nix nix/verus.nix
     quest check
 
-# Run unit, doc, and trybuild UI tests across the workspace.
+# Run unit, doc, and trybuild UI tests across the workspace, failing on any host-clock timer.
 test *args:
-    cargo test --locked --workspace {{ args }}
-    cargo test --locked --doc -p kio --all-features
+    KIO_DENY_HOST_TIMERS=1 cargo test --locked --workspace --all-features {{ args }}
 
 # Run kio's unit tests under Miri (nightly with the miri component).
 miri:
@@ -40,8 +39,13 @@ miri:
 # Run what CI runs: lint, then test.
 ci: check test
 
+# Prove src/log.rs's Verus proof. Needs Verus: run it in `nix develop .#verus`. The
+# `verify` package builds kio's sources with `vstd`, which kio itself never depends on.
+verify:
+    cargo verus verify --locked --manifest-path verify/Cargo.toml --target-dir target/verus
+
 # Apply formatters without changing program behavior.
 fix:
     cargo fmt --all
     taplo format
-    nixfmt flake.nix
+    nixfmt flake.nix nix/verus.nix

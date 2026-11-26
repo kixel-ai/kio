@@ -6,7 +6,6 @@ kio provides poll-native async shared-state primitives, a deterministic clock an
 - Keep `kio` free of domain-specific (MoQ) assumptions.
 - Every `unsafe` block states its safety invariant inline and has tests exercising the ordering or lifetime rule it relies on.
 - Unit tests use `kio::clock::sim` or `kio::clock::Manual` instead of sleeping on the host clock, except explicit host-clock tests gated for Miri.
-- Every clippy suppression carries a `reason = "..."`.
 
 # Development
 
