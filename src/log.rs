@@ -371,7 +371,8 @@ impl<T> Segment<T> {
 	///
 	/// # Safety
 	///
-	/// `segment` stays live for `'a`.
+	/// `segment` stays live for `'a`, `index` is in its range, and the write that filled
+	/// `index` happened before this.
 	#[cfg_attr(verus_keep_ghost, verus_spec(entry =>
 		with
 			Tracked(header): Tracked<&Frozen<PointsTo<Self>>>,
@@ -392,12 +393,12 @@ impl<T> Segment<T> {
 			Self::header(segment)
 		};
 		let at = (index - first.start) as usize;
-		// SAFETY: live, per the caller, and `index` is in the segment's range.
+		// SAFETY: live and `index` in range, per the caller.
 		let slot_at = unsafe {
 			proof_with!(Tracked(header));
 			Self::slot(segment, at)
 		};
-		// SAFETY: a slot of the segment, which is live for `'a`.
+		// SAFETY: written and live for `'a`, per the caller.
 		unsafe {
 			proof_with!(Tracked(slot));
 			pinned(slot_at)
