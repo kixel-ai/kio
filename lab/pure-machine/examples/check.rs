@@ -22,6 +22,13 @@ fn main() {
 		("NoPreemption", configs::live, Some(Mutant::NoPreemption)),
 		("NoLeaveWake", configs::streams, Some(Mutant::NoLeaveWake)),
 	];
+	if let Some(only) = &only
+		&& !runs.iter().any(|(name, ..)| name == only)
+	{
+		let names: Vec<_> = runs.iter().map(|(name, ..)| *name).collect();
+		eprintln!("unknown config or mutant {only}; one of {}", names.join(", "));
+		std::process::exit(2);
+	}
 	for (name, config, mutant) in runs {
 		if only.as_deref().is_some_and(|only| only != name) {
 			continue;

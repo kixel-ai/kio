@@ -4,6 +4,10 @@
 //! state itself, so a state costs a few bytes once expanded, and it expands states in
 //! breadth-first order, so the first trace it finds to a broken rule is a shortest one.
 //! Each step is replayed from the initial state to print a trace, as TLC re-explores.
+//!
+//! As with TLC, "every reachable state" holds up to fingerprint collisions: a state whose
+//! fingerprint matches a visited one is skipped, unchecked. For `n` states the chance of any
+//! collision is about `n² / 2⁶⁵`, about 2⁻²⁹ at the largest config's 300 k states.
 
 use std::collections::{HashSet, VecDeque};
 use std::fmt;
@@ -224,6 +228,8 @@ fn trace<M: StateMachine>(init: &M, nodes: &[Node<M::Event>], index: u32, last: 
 	let steps = events
 		.into_iter()
 		.map(|event| {
+			// Each step starts from an empty list, as in the search.
+			out.clear();
 			state.step(event.clone(), &mut out).expect("a recorded step replays");
 			(event, state.clone())
 		})

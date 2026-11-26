@@ -53,9 +53,15 @@ impl<T: Transport, const S: usize, const G: usize> Driver<T, S, G> {
 	/// if admitted: ready once its effects are applied, or pending, `waiter` registered, if
 	/// the pass changed nothing.
 	///
+	/// `pick` is the cached group the cursor's order puts first, whatever the session admits:
+	/// admission is decided here, under the lock, so an event between the caller's read and
+	/// this pass cannot make the pick stale. In either order, that group is admitted whenever
+	/// any cached group is.
+	///
 	/// # Panics
 	///
-	/// If `pick` is not the cursor's to hand out, which is the caller's bug.
+	/// If `pick` is not cached, or is `None` while the cache holds a group the session admits,
+	/// which is the caller's bug.
 	pub fn poll_step(&self, sub: usize, cached: u16, pick: Option<u8>, waiter: &kio::Waiter) -> Poll<()> {
 		let mut wake = [const { None }; S];
 		let parked = {
@@ -106,8 +112,10 @@ impl<T: Transport, const S: usize, const G: usize> Driver<T, S, G> {
 		self.lock().session
 	}
 
+	/// The state, refused once a pass panicked under the lock: the session may then be ahead
+	/// of what its transport applied, by an unknown number of effects.
 	fn lock(&self) -> std::sync::MutexGuard<'_, State<T, S, G>> {
-		self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+		self.state.lock().expect("an earlier pass panicked mid-way")
 	}
 }
 
@@ -121,7 +129,12 @@ fn route<T: Transport, const S: usize, const G: usize>(
 	let mut parked = false;
 	for output in state.out.drain(..) {
 		match output {
-			Output::Wake(s) if Some(s) != polled => wake[s] = Some(state.waiters[s].take()),
+			// A second wake of `s` in one pass finds its list taken already: keep the first.
+			Output::Wake(s) if Some(s) != polled => {
+				if wake[s].is_none() {
+					wake[s] = Some(state.waiters[s].take());
+				}
+			}
 			// The polled task is running: it polls again rather than waking itself.
 			Output::Wake(_) => {}
 			Output::Park(_) => parked = true,
@@ -166,6 +179,26 @@ mod tests {
 		fn applied(&self) -> Vec<Output> {
 			std::mem::take(&mut self.lock().transport)
 		}
+	}
+
+	/// A pass that wakes a task twice still wakes it: with three subscriptions, two opens'
+	/// `make_room` can each reset a stream of the third. The two-subscription configs never
+	/// emit it, so this routes the outputs by hand.
+	#[test]
+	fn wakes_twice_once() {
+		let driver = Driver::new(configs::base(None).session, Vec::new());
+		let count = Arc::new(Count::default());
+		let waiter = kio::Waiter::new(count.clone().into());
+		let mut wake = [const { None }; 2];
+		{
+			let mut state = driver.lock();
+			let state = &mut *state;
+			waiter.register(&mut state.waiters[1]);
+			state.out.extend([Output::Wake(1), Output::Wake(1)]);
+			route(state, &mut wake, Some(0));
+		}
+		wake_all(wake);
+		assert_eq!(count.0.load(Ordering::Relaxed), 1);
 	}
 
 	/// A parked task is woken when the stream holding the credit is freed, and then opens.

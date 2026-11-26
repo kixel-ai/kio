@@ -4,13 +4,13 @@ open Aeneas Aeneas.Std Result
 /-!
 # Warm pulls rank downward
 
-`warm_settle::Relay::options`, translated by Aeneas: every warm copy a relay may pull
-was last advertised feeding a reader ranked strictly below every reader the relay feeds
-itself, the local admission rule `WarmSettle.tla` calls "order". This is a guarantee about
-one relay's choice from the adverts it last heard, not about live chains: a sender's rank
-can change after it advertised, and a relay keeps its old parent while a new one is pending.
-Where adverts are current, ranks strictly fall along a chain of warm pulls, so none closes
-a loop.
+`warm_settle::Relay::options`, translated by Aeneas: every warm copy a relay may choose
+was last advertised, or answered live by its current parent, feeding a reader ranked
+strictly below every reader the relay feeds itself, the local admission rule
+`WarmSettle.tla` calls "order". This is a guarantee about one relay's eligible choices from
+what it last heard, not about the pulls it holds: a sender's rank can change after it
+advertised, and a relay keeps its old parent while a new one is pending. Loop freedom is a
+network property this does not prove.
 
 Relays are numbered from 1 to `N`, and a path is a `u16` bit set, so `N ≤ 16`.
 -/
