@@ -11,8 +11,9 @@ Every wait is a `poll_*` method first, so the default build compiles no `async` 
 the `async` feature adds `async fn` wrappers that await them. Producers and consumers share state and park on predicates over it,
 alongside a FIFO queue, an append-only log readers take entries from without a lock, and
 a poll-driven task set. `clock` is the time those waits run on, and its `sim` feature
-runs a test on a deterministic executor whose time jumps instead of sleeping
-(`cargo add --dev kio --features sim`):
+runs a test on a deterministic executor whose time jumps instead of sleeping. The
+crates.io release predates `sim`, so take kio from Git until the next one ships
+(`cargo add --dev kio --git https://github.com/kixel-ai/kio --features sim`):
 
 ```rust
 use std::time::Duration;

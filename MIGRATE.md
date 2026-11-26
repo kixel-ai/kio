@@ -18,6 +18,10 @@ The scope changed with it. `Fan::hold()` deferred one fan's wakes made from any
 thread; `kio::hold()` defers every list's wakes, but only those made on the thread
 that opened it. A wake from another thread now lands at once, so a task it wakes may
 find a lock still held: open a hold on every thread that wakes waiters under a lock.
+A hold on the waking thread doesn't cover a lock another thread owns: once it drops,
+the woken task can run while that owner still holds the lock, and nothing restores
+the old cross-thread deferral. The lock's owner must open the hold around its own
+wakes, or release the lock before another thread wakes the waiters that take it.
 
 ### `async` methods moved behind the `async` feature ([moq-dev/moq#7506](https://github.com/moq-dev/moq/pull/7506))
 
