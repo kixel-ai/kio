@@ -5,7 +5,7 @@ error[E0061]: this method takes 1 argument but 0 arguments were supplied
    |                                             ^^^^^^^^-- argument #1 of type `&Waiter` is missing
    |
 note: method defined here
-  --> $WORKSPACE/rs/kio/src/queue.rs
+  --> $WORKSPACE/src/queue.rs
    |
    |     pub fn poll_pop(&self, waiter: &Waiter) -> Poll<Result<T, Closed>> {
    |            ^^^^^^^^

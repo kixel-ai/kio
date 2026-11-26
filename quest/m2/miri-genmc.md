@@ -28,22 +28,16 @@ Loom did this job and was removed in
 needed a `cfg(loom)` shim around every primitive and never found a race.
 GenMC needs no shims, so the only upkeep is the Nightly row.
 
-- Add a pass to `sh/rs/miri.sh` over the tests of `rs/kio/src/log.rs` and
-  `rs/kio/src/channel.rs` that spawn threads. Keep the many-seeds pass for
-  everything GenMC cannot run.
+- Add a Miri CI/nightly pass over the tests of `src/log.rs` and `src/channel.rs`
+  that spawn threads. Keep the many-seeds pass for everything GenMC cannot run.
 - GenMC explodes with thread count and loop bounds. Size each test it runs
-  to a few threads and a few operations, and measure that the pass fits
-  Nightly.
+  to a few threads and a few operations, and measure that the pass fits CI.
 - As of 2026-11-10 it also misses bugs that depend on reused allocations and
   on spurious `compare_exchange_weak` failures, and it runs without borrow
   tracking. Recheck those limits and say in the recipe which remain.
 
 Public API: none. Wire: none.
 
-## Required
-
-- [Concurrent tests run under many Miri schedules and ThreadSanitizer](/quest/m4/miri-seeds-tsan.md) - the Miri pass over threaded tests that this makes exhaustive
-
 ## Related
 
-- [Drop kio's epoch fence](/quest/m5/crossbeam-pin-fence.md) - the ordering in kio's log that only a weak-memory check can confirm
+- [Drop kio's epoch fence](/quest/m2/crossbeam-pin-fence.md) - the ordering in kio's log that only a weak-memory check can confirm

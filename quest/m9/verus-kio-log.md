@@ -46,11 +46,11 @@ prove the slot publication alone and say so: a partial proof that measures the
 cost still answers the spike's question.
 
 Pin Verus through the dev shell (Nix), not a global install. Runs alongside
-[Miri's GenMC mode](/quest/m5/miri-genmc.md), which explores the same code's
+[Miri's GenMC mode](/quest/m2/miri-genmc.md), which explores the same code's
 schedules without changing it; the PR says what each catches that the other
 misses.
 
 ## Related
 
-- [Kani proves the varint codecs](/quest/m4/codec-kani.md) - the bounded-proof tool already planned for moq-net's codecs
-- [Miri's GenMC mode explores every schedule of kio's lock-free code](/quest/m5/miri-genmc.md) - the unchanged-code alternative for the same module
+- [Miri's GenMC mode explores every schedule of kio's lock-free code](/quest/m2/miri-genmc.md) - the unchanged-code alternative for the same module
+- [Spike provable state-machine designs for kio](/quest/m9/kio-state-machines/README.md) - complementary state-machine verification spikes

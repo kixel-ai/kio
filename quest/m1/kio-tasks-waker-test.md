@@ -2,7 +2,7 @@
 
 ## Goal
 
-A unit test in `rs/kio/src/task.rs` shows that when a task taken out with
+A unit test in `src/task.rs` shows that when a task taken out with
 `Tasks::remove` wakes after another task was `insert`ed into its slot, the
 new occupant is polled at most once spuriously, still finishes on its own
 wake (handed back through `poll_each`), and its `TaskKey` still removes

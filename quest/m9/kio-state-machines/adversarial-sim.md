@@ -11,7 +11,7 @@ The spike runs on a plain poll-based `SendCredit` harness (with injected wakeup 
 
 ## Plan
 
-Part of [Spike provable state-machine designs for kio](/quest/m9/kio-state-machines/README.md). Carried into `kixel-ai/kio` when [kio-repo](/quest/m1/kio-repo.md) lands.
+Part of [Spike provable state-machine designs for kio](/quest/m9/kio-state-machines/README.md).
 
 - Replace `sim::run_inner`'s opaque `FuturesUnordered` loop with an explicit ready-task set so the scheduler controls which ready task runs next, and hook `kio::Tasks::poll` under `feature = "sim"` so nested `Tasks` children participate in the same choice-point schedule instead of draining in fixed ascending slot order.
 - Make sure zero overhead leaks into non-`sim` builds (`#[cfg(feature = "sim")]` only, verified with `kio`'s `tasks` and `channel` instruction benches).

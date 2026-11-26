@@ -475,7 +475,22 @@ mod tests {
 	#[cfg_attr(miri, ignore = "re-runs itself in a fresh process, which Miri cannot spawn")]
 	fn paused_runtimes_own_their_anchors() {
 		// A fresh process keeps other tests from taking the shared origin first.
-		if !test_env::Env::default().set("MOQ_CLOCK_TEST_ORIGIN", "fresh").isolate() {
+		const CHILD: &str = "KIO_CLOCK_TEST_ORIGIN";
+		let test = std::thread::current()
+			.name()
+			.expect("test runs on its own thread")
+			.to_owned();
+		if std::env::var_os(CHILD).as_deref() != Some(std::ffi::OsStr::new(&test)) {
+			let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+				.args([&test, "--exact", "--include-ignored", "--test-threads=1"])
+				.env(CHILD, &test)
+				.output()
+				.expect("failed to start test binary");
+			let stdout = String::from_utf8_lossy(&output.stdout);
+			print!("{stdout}");
+			eprint!("{}", String::from_utf8_lossy(&output.stderr));
+			assert!(output.status.success(), "{test} failed in child: {}", output.status);
+			assert!(stdout.contains("running 1 test"), "child ran no test named {test}");
 			return;
 		}
 		assert!(super::ORIGIN.get().is_none());

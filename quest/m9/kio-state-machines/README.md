@@ -25,19 +25,12 @@ Decided 2026-11-25 (maintainer, `/quest-plan` on designing async Rust for state-
   4. `rust2-lean` MIR extraction in `kixel-ai/rust2` (`quest/m2/lean-spike.md` there).
 - ✅ Benchmark targets: `SendCredit` (`rs/moq-net/verify/credit/SendCredit.tla`, 289 lines: stream-credit line, preemption, `give_way`, `stuck` cursor, `Line::wake_head`) across all three `kio` spikes, plus routing (`WarmSettle` from `rs/moq-net/verify/warm/WarmSettle.tla` / `rs/moq-net/src/route/tests/warm.rs`) for the Lean 4 (`rust2-lean` vs. Aeneas) comparison (rejected: `Reconnect` / `Handover` for the `kio` spikes, `WarmSettle` across every spike).
 
-Carried into `kixel-ai/kio`'s quest tree when [Move kio to its own repository](/quest/m1/kio-repo.md) executes, dropping the `Required` link below. Keep every prototype behind an internal/experimental feature or test crate until the comparison report settles the public API.
+Keep every prototype behind an internal/experimental feature or test crate until the comparison report settles the public API.
 
 Public API: none (lab spikes only). Wire: none.
-
-## Required
-
-- [Move kio to its own repository, kixel-ai/kio](/quest/m1/kio-repo.md) - moves `kio` into its own workspace and carries this epic there
 
 ## Related
 
 - [Spike: Verus proves kio::log's commit protocol as written](/quest/m9/verus-kio-log.md) - deductive proofs on `kio`'s unsafe lock-free internals
-- [Subscription runs are checked against the TLA+ model](/quest/m4/subscribe-trace-validation.md) - external TLA+ trace validation planned in `moq`
-- [Resume sweeps are checked against the TLA+ model](/quest/m4/resume-trace-validation.md) - shared trace format and TLC recipe in `moq`
-- [Reconnect runs are checked against the TLA+ model](/quest/m4/reconnect-trace-validation.md) - external trace validation for `Handover.tla`
-- [Kani proves the varint codecs and length arithmetic for every input](/quest/m4/codec-kani.md) - bounded code proofs for `moq-net` codecs
-- [Miri's GenMC mode explores every schedule of kio's lock-free code](/quest/m5/miri-genmc.md) - weak-memory schedule exploration for `kio`
+- [Miri's GenMC mode explores every schedule of kio's lock-free code](/quest/m2/miri-genmc.md) - weak-memory schedule exploration for `kio`
+- `moq-dev/moq` external TLA+ trace validation quests ([subscribe](https://github.com/moq-dev/moq/blob/main/quest/m4/subscribe-trace-validation.md), [resume](https://github.com/moq-dev/moq/blob/main/quest/m4/resume-trace-validation.md), [reconnect](https://github.com/moq-dev/moq/blob/main/quest/m4/reconnect-trace-validation.md)) and [codec Kani](https://github.com/moq-dev/moq/blob/main/quest/m4/codec-kani.md)

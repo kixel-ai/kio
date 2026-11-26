@@ -11,9 +11,9 @@ The spike implements `SendCredit` (using real `kio` channels, `Waiter`s, and `Li
 
 ## Plan
 
-Part of [Spike provable state-machine designs for kio](/quest/m9/kio-state-machines/README.md). Carried into `kixel-ai/kio` when [kio-repo](/quest/m1/kio-repo.md) lands.
+Part of [Spike provable state-machine designs for kio](/quest/m9/kio-state-machines/README.md).
 
-- Build on the existing `kio-macros` crate (`rs/kio/macros/src/lib.rs`, which already provides `#[kio::machine]` and `#[kio::wrapper]`), keeping `#[kio::reactor]` internal/experimental until the epic's comparison report settles the design.
+- Build on the existing `kio-macros` crate (`macros/src/lib.rs`, which already provides `#[kio::machine]` and `#[kio::wrapper]`), keeping `#[kio::reactor]` internal/experimental until the epic's comparison report settles the design.
 - Keep the action contract explicit and small: an action returning `Poll::Pending` means its guard is disabled (and registered its waiter); returning `Poll::Ready` means one atomic transition occurred. Check whether actions can remain pure of hidden blocking or re-entrant locks.
 - Test trace validation end-to-end on `SendCredit` by writing a thin projection from the macro's emitted action log into TLC trace validation against `SendCredit.tla`, measuring how much glue code remains compared to hand-instrumenting `poll_*` functions.
 - Inject at least two real failure modes (a missing `wake_head` wakeup and a priority-dependent `give_way` / preemption race) and confirm the `sim` action explorer catches both with named action traces.

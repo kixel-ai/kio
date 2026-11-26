@@ -11,7 +11,7 @@ error[E0507]: cannot move out of value, a captured variable in an `FnMut` closur
   |                                               value is moved here
   |
 help: `Fn` and `FnMut` closures require captured values to be able to be consumed multiple times, but `FnOnce` closures may consume them only once
- --> $WORKSPACE/rs/kio/src/waiter.rs
+ --> $WORKSPACE/src/waiter.rs
   |
   |     F: FnMut(&Waiter) -> Poll<R> + Unpin,
   |        ^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -3,7 +3,7 @@
 ## Goal
 
 The workspace takes a crossbeam-epoch release that fixes `Local::pin`, and
-kio's `fence(Release)` in `Read::drop` (`rs/kio/src/log.rs`) is deleted, with
+kio's `fence(Release)` in `Read::drop` (`src/log.rs`) is deleted, with
 kio's log tests still passing on ARM.
 
 ## Waiting

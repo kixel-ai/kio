@@ -12,7 +12,7 @@ The PR reports LOC, ergonomics, BFS states/sec and memory vs. TLC, Kani check ti
 
 ## Plan
 
-Part of [Spike provable state-machine designs for kio](/quest/m9/kio-state-machines/README.md). Carried into `kixel-ai/kio` when [kio-repo](/quest/m1/kio-repo.md) lands.
+Part of [Spike provable state-machine designs for kio](/quest/m9/kio-state-machines/README.md).
 
 - Keep the `StateMachine` trait and BFS explorer internal (no published API changes yet). Model multi-actor composition (e.g., `Publisher` + `Line` + abstract `Transport` / `Wire`) as a small generic harness so BFS explores nondeterministic delivery, resets, and arrivals with state hashing and symmetry/canonicalization if needed.
 - Measure the boundary cost honestly: show what happens when a control-plane machine must coordinate with shared data-plane state (e.g., passing opaque group keys rather than payload `Bytes`), and note any place where `Clone + Eq + Hash` forces awkward data structures (`BTreeMap` vs. `HashMap`, bounded arrays, or indices).

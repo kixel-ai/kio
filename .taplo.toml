@@ -1,0 +1,6 @@
+exclude = ["**/target/**", "**/.direnv/**", "**/.tmp/**"]
+
+[formatting]
+indent_string = "    "
+column_width = 120
+align_comments = false
