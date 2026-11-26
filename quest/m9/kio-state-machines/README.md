@@ -34,7 +34,7 @@ Reactor spike results (`lab/reactor/`, `kio-macros`'s `unstable-reactor` feature
 - Build: `unstable-reactor` adds 0.03 s to `kio-macros`; a `kio-reactor-lab` rebuild is 0.22 s.
 - Bugs: a missing `wake_head` is caught as a lost wakeup on `TrackRun[n].open` in 32-78% of seeds per config; a `give_way` that assumes `open` ran first panics in `hand_out` in 9-20% of seeds, and never under the priority order. Each seed takes 60-85 µs; 100k seeds reach 49-79% of the split spec's distinct states.
 - Trace validation: 200 runs per config replay in TLC in about 3 s each. The glue is a 50-line projection to the spec's `v`, a 41-line trace spec, and a 45-line `SendCreditSplit.tla`: the reactor's actions are finer than the spec's atomic `Step(s)`, so traces validate against the split refinement, which TLC checks against every rule in 5 s to 4.5 min per config (59k-441k states vs. the original's 42k-296k).
-- Contract: an action that changes state must return `Ready`, so `moq-net`'s `Open::poll`, which joins the line, asks for credit, and resets streams on a `Pending` return, splits into a `Ready` per change; the explorer only sees what an action reports.
+- Contract: an action that changes state must return `Ready`, so `moq-net`'s `Open::poll`, which joins the line, asks for credit, and resets streams yet returns `Pending`, has to return `Ready` for that firing instead. Everything one `Ready` firing changes is one step: invariants run only after it, so its intermediate states go unchecked.
 
 Public API: none (lab spikes only). Wire: none.
 

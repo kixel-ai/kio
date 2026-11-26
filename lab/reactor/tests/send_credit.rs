@@ -28,14 +28,15 @@ fn the_priority_order_reaches_quiet() {
 				let mut system = System::new(config.clone(), seed);
 				drive(&mut system, driver);
 				// Nothing is left mid-send: every stream ended, or is a live group's.
-				assert!(
-					system
-						.states()
-						.iter()
-						.flatten()
-						.all(|st| !matches!(*st, "fin" | "reset")),
-					"{driver:?} left a stream unfreed"
-				);
+				for (sub, row) in config.subs.iter().zip(system.states()) {
+					for (k, st) in (1..).zip(row) {
+						let live = sub.live == Some(k);
+						assert!(
+							!matches!(st, "fin" | "reset") && (st != "serving" || live),
+							"{driver:?} left group {k} {st}"
+						);
+					}
+				}
 			}
 		}
 	}
