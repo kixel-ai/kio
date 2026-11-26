@@ -11,8 +11,9 @@ on:
 permissions:
   contents: read
 
+# Per ref, so a manual run on a topic branch never displaces main's queued run.
 concurrency:
-  group: post-merge
+  group: post-merge-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -64,7 +65,7 @@ jobs:
 
   report:
     needs: [test, miri, bench]
-    if: failure()
+    if: failure() && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -76,7 +77,8 @@ jobs:
           TITLE: Post-merge CI failed
           BODY: "Post-merge failed on ${{ github.sha }}: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
         run: |
-          issue=$(gh issue list --state open --search "in:title \"$TITLE\"" --json number,title \
+          # Lists rather than searches, so an issue another run just opened is already visible.
+          issue=$(gh issue list --state open --limit 1000 --json number,title \
             --jq "map(select(.title == \"$TITLE\")) | first | .number // empty")
           if [ -n "$issue" ]; then
             gh issue comment "$issue" --body "$BODY"
