@@ -2,8 +2,9 @@
 //! schedule of each `SendCredit.tla` config `ITERS` times, either way.
 //!
 //! `cargo build --release -p kio-pure-machine --example cost`, then count instructions with
-//! `perf stat -e instructions:u target/release/examples/cost <none|step|driver> <iters>`;
-//! `none` builds the schedules and stops, the baseline to subtract.
+//! `perf stat -e instructions:u target/release/examples/cost <mode> <iters>`. `none` builds
+//! the schedules and stops, the baseline for `step`; `setup` also builds each replay's driver
+//! and task waiters, the baseline for `driver`.
 
 use std::hint::black_box;
 use std::sync::Arc;
@@ -35,7 +36,7 @@ impl Transport for Sink {
 
 fn main() {
 	let mut args = std::env::args().skip(1);
-	let mode = args.next().expect("a mode: none, step, or driver");
+	let mode = args.next().expect("a mode: none, step, setup, or driver");
 	let iters: usize = args.next().map_or(100_000, |n| n.parse().expect("an iteration count"));
 
 	let runs: Vec<_> = [configs::base, configs::live, configs::priority, configs::streams]
@@ -48,12 +49,15 @@ fn main() {
 	let events: usize = runs.iter().map(|(_, events)| events.len()).sum();
 
 	let counts: [Arc<Count>; 2] = Default::default();
-	let waiters = counts.clone().map(|count| kio::Waiter::new(count.into()));
 	let mut out = Vec::with_capacity(16);
 	for _ in 0..iters {
 		for (init, events) in &runs {
 			match mode.as_str() {
 				"none" => {}
+				"setup" => {
+					black_box(Driver::new(*init, Sink));
+					black_box(counts.clone().map(|count| kio::Waiter::new(count.into())));
+				}
 				"step" => {
 					let mut session: Session<2, 3> = *init;
 					for &event in events {
@@ -65,7 +69,9 @@ fn main() {
 					black_box(&session);
 				}
 				"driver" => {
+					// Each session's tasks are new, as their waiters' records are.
 					let driver = Driver::new(*init, Sink);
+					let waiters = counts.clone().map(|count| kio::Waiter::new(count.into()));
 					for &event in events {
 						match black_box(event) {
 							Event::Poll { sub, cached, pick } => {

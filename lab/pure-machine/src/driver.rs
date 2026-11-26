@@ -17,6 +17,10 @@ use crate::send_credit::{Event, Output, Session};
 /// Where the machine's stream effects go: take, shed, open, or reset.
 pub trait Transport {
 	/// Carry out `effect`, called under the session's lock in the order the machine decided.
+	///
+	/// It must not call back into the driver, such as reporting a stream already sent whole
+	/// through [`Driver::finished`], which would deadlock on that lock: defer such reports
+	/// until `apply` returns.
 	fn apply(&mut self, effect: Output);
 }
 
