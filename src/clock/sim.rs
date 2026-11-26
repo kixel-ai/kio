@@ -31,7 +31,7 @@
 
 use std::{
 	cell::{Cell, RefCell},
-	collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
+	collections::{BTreeMap, BTreeSet, VecDeque},
 	future::{Future, IntoFuture},
 	panic::Location,
 	pin::{Pin, pin},
@@ -106,8 +106,8 @@ struct Runtime {
 	time: RefCell<Time>,
 	/// Queues kept in step with simulated time, until their owners drop them.
 	queues: RefCell<Vec<WeakDeadlines>>,
-	/// Awaiting [`idle`]: each flag is raised, and its waker woken, once nothing else can run.
-	idle: RefCell<Vec<(Rc<Cell<bool>>, Waker)>>,
+	/// Awaiting [`idle`], each settled and woken once nothing else can run; held weakly.
+	idle: RefCell<Vec<std::rc::Weak<Idle>>>,
 	seed: u64,
 	rng: RefCell<rand::rngs::StdRng>,
 }
@@ -454,7 +454,7 @@ struct Root<'a> {
 
 impl Root<'_> {
 	/// Poll task `id`, returning whether it finished and whether it woke itself.
-	fn poll(&mut self, spawned: &mut HashMap<usize, Spawned>, id: usize) -> (bool, bool) {
+	fn poll(&mut self, spawned: &mut BTreeMap<usize, Spawned>, id: usize) -> (bool, bool) {
 		if id == ROOT {
 			self.queue.queued.store(false, Ordering::Release);
 			let done = poll(self.future.as_mut(), &mut Context::from_waker(&self.waker)).is_ready();
@@ -480,7 +480,8 @@ fn run_inner(runtime: &Runtime, future: Pin<&mut dyn Future<Output = ()>>, locat
 		queue,
 		location,
 	};
-	let mut spawned = HashMap::new();
+	// In id order, so a run that ends drops what is still pending in the same order on replay.
+	let mut spawned = BTreeMap::new();
 	// Tasks that woke themselves while they ran.
 	let mut yielded = BTreeSet::new();
 	let mut weights = Vec::new();
@@ -535,18 +536,27 @@ fn run_inner(runtime: &Runtime, future: Pin<&mut dyn Future<Output = ()>>, locat
 			if done && id == ROOT {
 				break;
 			}
+			// Only `pct` ranks tasks, and only it counts their steps, finishing ones included.
 			if done {
 				spawned.remove(&id);
 				yielded.remove(&id);
-				runtime.priorities.borrow_mut().remove(&id);
-			} else {
-				if woke {
-					yielded.insert(id);
+				if let Some(mut priority) = runtime.priorities.borrow_mut().remove(&id) {
+					runtime.schedule.borrow_mut().ran(&mut priority, false);
 				}
-				// Only `pct` ranks tasks, and only it counts their steps.
-				if let Some(priority) = runtime.priorities.borrow_mut().get_mut(&id) {
-					runtime.schedule.borrow_mut().ran(priority, woke);
+				continue;
+			}
+			if woke {
+				// A wake while it ran coalesced into a place it may already hold near the
+				// front: it goes behind every task that was ready, as a yield promises.
+				let mut ready = runtime.ready.0.lock().unwrap();
+				if let Some(at) = ready.iter().position(|&queued| queued == id) {
+					ready.remove(at);
+					ready.push_back(id);
 				}
+				yielded.insert(id);
+			}
+			if let Some(priority) = runtime.priorities.borrow_mut().get_mut(&id) {
+				runtime.schedule.borrow_mut().ran(priority, woke);
 			}
 			continue;
 		}
@@ -563,11 +573,13 @@ fn run_inner(runtime: &Runtime, future: Pin<&mut dyn Future<Output = ()>>, locat
 		if runtime.advance(queued) {
 			continue;
 		}
-		let idle = runtime.idle.take();
+		let idle: Vec<Rc<Idle>> = runtime.idle.take().iter().filter_map(std::rc::Weak::upgrade).collect();
 		assert!(!idle.is_empty(), "deadlock: every task is parked and no timer is armed");
-		for (settled, waker) in idle {
-			settled.set(true);
-			waker.wake();
+		for idle in idle {
+			idle.settled.set(true);
+			if let Some(waker) = idle.waker.take() {
+				waker.wake();
+			}
 		}
 	}
 
@@ -579,7 +591,7 @@ fn run_inner(runtime: &Runtime, future: Pin<&mut dyn Future<Output = ()>>, locat
 /// woke it, so without the probe it would sleep through the change it missed.
 ///
 /// A task set polls every child while probing, and blames the first that progresses.
-fn probe(runtime: &Runtime, root: &mut Root<'_>, spawned: &mut HashMap<usize, Spawned>) {
+fn probe(runtime: &Runtime, root: &mut Root<'_>, spawned: &mut BTreeMap<usize, Spawned>) {
 	struct Probing;
 	impl Drop for Probing {
 		fn drop(&mut self) {
@@ -590,8 +602,7 @@ fn probe(runtime: &Runtime, root: &mut Root<'_>, spawned: &mut HashMap<usize, Sp
 	PROBING.set(true);
 	let _probing = Probing;
 
-	let mut ids: Vec<usize> = std::iter::once(ROOT).chain(spawned.keys().copied()).collect();
-	ids.sort_unstable();
+	let ids: Vec<usize> = std::iter::once(ROOT).chain(spawned.keys().copied()).collect();
 	for id in ids {
 		let before = events();
 		BLAMED.set(None);
@@ -635,6 +646,11 @@ pub(crate) fn children() -> Option<Children> {
 }
 
 impl Children {
+	/// The run scheduling the pass.
+	pub(crate) fn run(&self) -> u64 {
+		self.runtime.id
+	}
+
 	/// A child's priority, under a schedule that ranks them.
 	pub(crate) fn priority(&self) -> Option<Priority> {
 		self.runtime.schedule.borrow_mut().priority()
@@ -753,14 +769,27 @@ pub fn suspend(duration: Duration) {
 /// Outside [`run`].
 pub fn idle() -> impl Future<Output = ()> {
 	let runtime = expect_current();
-	let settled = Rc::new(Cell::new(false));
+	let idle = Rc::new(Idle {
+		settled: Cell::new(false),
+		waker: RefCell::new(None),
+	});
 	std::future::poll_fn(move |cx| {
-		if settled.get() {
+		if idle.settled.get() {
 			return Poll::Ready(());
 		}
-		runtime.idle.borrow_mut().push((settled.clone(), cx.waker().clone()));
+		// Registered once, its waker kept current, so a probe's re-polls add nothing;
+		// the run holds it weakly, so a dropped future awaits nothing.
+		if idle.waker.replace(Some(cx.waker().clone())).is_none() {
+			runtime.idle.borrow_mut().push(Rc::downgrade(&idle));
+		}
 		Poll::Pending
 	})
+}
+
+/// An [`idle`] future's registration with its run.
+struct Idle {
+	settled: Cell<bool>,
+	waker: RefCell<Option<Waker>>,
 }
 
 /// Yield once, letting every other ready task run first.
@@ -1725,6 +1754,40 @@ mod tests {
 				});
 			}
 		}
+	}
+
+	/// A task woken while it runs, then yielding, still goes behind a task woken after it.
+	#[test]
+	fn a_yield_runs_behind_tasks_woken_before_it() {
+		for config in [Config::default(), random(), pct()] {
+			for seed in 0..10 {
+				run_with(seed, config.clone(), async {
+					let mut sleep = pin!(crate::clock::sleep(Duration::from_secs(1)));
+					// Armed first, so advancing wakes this task ahead of the other.
+					let armed = std::future::poll_fn(|cx| Poll::Ready(sleep.as_mut().poll(cx))).await;
+					assert!(armed.is_pending());
+					let task = spawn(crate::clock::sleep(Duration::from_secs(1)));
+					yield_now().await;
+					advance(Duration::from_secs(1)).await;
+					assert!(task.is_finished(), "{config:?} seed {seed}");
+				});
+			}
+		}
+	}
+
+	/// An `idle` future polled at every stall keeps one registration.
+	#[test]
+	fn idle_registers_once_however_often_probed() {
+		run_with(0, probing(), async {
+			let steps = spawn(async {
+				for _ in 0..50 {
+					crate::clock::sleep(Duration::from_secs(1)).await;
+				}
+				assert_eq!(expect_current().idle.borrow().len(), 1);
+			});
+			idle().await;
+			steps.await.unwrap();
+		});
 	}
 
 	/// The order four ready tasks, or four new children of one set, first run in.

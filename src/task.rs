@@ -137,8 +137,8 @@ struct Sim {
 	/// Where it was pushed, to blame it for a lost wakeup.
 	location: &'static std::panic::Location<'static>,
 	/// Its rank when the simulator schedules children by priority, drawn at its first
-	/// scheduled pass.
-	priority: Option<crate::clock::sim::Priority>,
+	/// scheduled pass in a run, with that run's id, so a set outliving a run redraws.
+	priority: Option<(u64, crate::clock::sim::Priority)>,
 }
 
 /// Waker state shared with every slot; deliberately `T`-free so the wakers
@@ -666,10 +666,11 @@ impl<T: Task> Tasks<T> {
 		// A stale bit names a slot whose occupant already finished.
 		woken.retain(|&index| matches!(self.children.get(index), Some(Some(_))));
 
+		let run = children.run();
 		for &index in &woken {
 			let sim = &mut self.sim[index];
-			if sim.priority.is_none() {
-				sim.priority = children.priority();
+			if sim.priority.is_none_or(|(drawn, _)| drawn != run) {
+				sim.priority = children.priority().map(|priority| (run, priority));
 			}
 		}
 
@@ -677,7 +678,11 @@ impl<T: Task> Tasks<T> {
 		let mut ran = false;
 		while !woken.is_empty() {
 			priorities.clear();
-			priorities.extend(woken.iter().map(|&index| self.sim[index].priority.unwrap_or(0)));
+			priorities.extend(
+				woken
+					.iter()
+					.map(|&index| self.sim[index].priority.map_or(0, |(_, priority)| priority)),
+			);
 			let Some(pick) = children.pick(&priorities, ran) else {
 				for index in woken {
 					self.wakers[index].wake_by_ref();
@@ -700,6 +705,10 @@ impl<T: Task> Tasks<T> {
 			}
 			match poll {
 				Poll::Ready(output) => {
+					// A finishing poll is a step too.
+					if let Some((_, mut priority)) = self.sim[index].priority.take() {
+						children.ran(&mut priority, false);
+					}
 					let occupant = self.children[index].take().expect("polled slot is occupied");
 					self.free.push(index);
 					self.len -= 1;
@@ -708,7 +717,7 @@ impl<T: Task> Tasks<T> {
 				Poll::Pending => {
 					let word = &self.chunks[index / CHUNK_SLOTS].words[(index % CHUNK_SLOTS) / WORD_BITS];
 					let yielded = word.load(Ordering::Acquire) & (1 << (index % WORD_BITS)) != 0;
-					if let Some(priority) = &mut self.sim[index].priority {
+					if let Some((_, priority)) = &mut self.sim[index].priority {
 						children.ran(priority, yielded);
 					}
 				}
