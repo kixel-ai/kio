@@ -1,8 +1,11 @@
 [toolchain]
-# The build toolchain, not the 1.91 library floor (`rust-version` in Cargo.toml).
-# It has to be at least 1.98: below that, rustc strips Mach-O debuginfo with an
-# llvm-objcopy that leaves the LINKEDIT string pool 4-byte aligned, and macOS 27's
-# dyld refuses to load such an image, which makes a release-profile kio-macros a coin flip there.
-# flake.nix reads this file, so the dev shell and CI follow it.
+# Pinned to the build toolchain, not the 1.91 library floor in Cargo.toml. It
+# has to be at least 1.98: below that, rustc strips Mach-O debuginfo with an
+# llvm-objcopy that leaves the LINKEDIT string pool 4-byte aligned, and macOS
+# 27's dyld refuses to load such an image, which breaks release-profile proc
+# macros such as kio-macros there. flake.nix reads this file.
 channel = "1.100.0"
+# Minimal, not default: the default profile adds rust-docs, 677 MB and 67k files
+# that every CI run's dev shell would download, patch, and link.
+profile = "minimal"
 components = ["rustfmt", "clippy", "rust-src"]
