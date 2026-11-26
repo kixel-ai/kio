@@ -133,7 +133,10 @@ impl PartialEq for Clock {
 			(Source::Installed(a), Source::Installed(b)) => a.same(b),
 			#[cfg(feature = "sim")]
 			(Source::Sim(a), Source::Sim(b)) => a == b,
-			#[allow(unreachable_patterns, reason = "only the host clock exists without features")]
+			#[cfg_attr(
+				not(any(feature = "runtime", feature = "sim")),
+				expect(unreachable_patterns, reason = "only the host clock exists without features")
+			)]
 			_ => false,
 		}
 	}

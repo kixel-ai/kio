@@ -35,6 +35,9 @@
 //! fn` that awaits a `poll_*` method.
 
 #![warn(missing_docs)]
+// Verus's attribute syntax puts macro attributes on statements in `log`'s proof. Only
+// Verus, which allows unstable features, sets the cfg.
+#![cfg_attr(verus_keep_ghost, feature(proc_macro_hygiene))]
 
 use std::{
 	fmt,
@@ -159,16 +162,20 @@ pub(crate) struct Counts {
 
 impl Counts {
 	/// Add a consumer only while one already exists, so demand never goes from zero to one here.
-	#[allow(
-		deprecated,
-		reason = "its replacement, `try_update`, needs Rust 1.95, above the 1.91 floor"
-	)]
+	// A hand-rolled loop: `fetch_update` is deprecated from Rust 1.99 and its replacement,
+	// `try_update`, needs 1.95, above the 1.91 floor.
 	pub fn join_consumers(&self) -> bool {
-		self.consumers
-			.fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
-				(count > 0).then(|| count + 1)
-			})
-			.is_ok()
+		let mut count = self.consumers.load(Ordering::Acquire);
+		while count > 0 {
+			match self
+				.consumers
+				.compare_exchange_weak(count, count + 1, Ordering::AcqRel, Ordering::Acquire)
+			{
+				Ok(_) => return true,
+				Err(actual) => count = actual,
+			}
+		}
+		false
 	}
 }
 

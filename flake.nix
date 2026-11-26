@@ -19,7 +19,6 @@
 
   outputs =
     {
-      self,
       nixpkgs,
       flake-utils,
       rust-overlay,
@@ -42,28 +41,33 @@
           };
           toolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
           quest-cli = quest.packages.${system}.default;
+          devPackages = with pkgs; [
+            toolchain
+            quest-cli
+            just
+            jq
+            git
+            gh
+            actionlint
+            cargo-shear
+            taplo
+            nixfmt
+          ];
+          verus = pkgs.callPackage ./nix/verus.nix { inherit (pkgs) rust-bin; };
         in
         {
-          packages.quest = quest-cli;
-          devShells.default = pkgs.mkShell {
-            packages = with pkgs; [
-              toolchain
-              quest-cli
-              just
-              jq
-              git
-              gh
-              actionlint
-              cargo-shear
-              taplo
-              nixfmt
-            ];
+          packages = pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux { inherit verus; };
+          devShells = {
+            default = pkgs.mkShell { packages = devPackages; };
+          }
+          # The default shell plus Verus, for `just verify`. Separate so the merge gate's
+          # shell doesn't download Verus's toolchain; Linux only, as Verus's release is.
+          // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+            verus = pkgs.mkShell { packages = devPackages ++ [ verus ]; };
+            # lab/pure-machine's Charon, Aeneas, and Lean, Linux only as Aeneas's release is.
+            prove = import ./lab/pure-machine/prove.nix { inherit pkgs; };
           };
           formatter = pkgs.nixfmt;
-          checks.quest-tree = pkgs.runCommand "quest-tree" { nativeBuildInputs = [ quest-cli ]; } ''
-            quest --root ${self} check
-            touch "$out"
-          '';
         }
       );
 }
