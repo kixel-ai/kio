@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- kio-macros parses with syn 3, the version serde and futures already build, and the `sim` feature builds futures without its executor and macros.
+
 ## [0.6.4](https://github.com/moq-dev/moq/compare/kio-v0.6.3...kio-v0.6.4) - 2026-11-03
 
 ### Other

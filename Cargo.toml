@@ -10,7 +10,8 @@ rust-version = "1.91"
 allow_attributes_without_reason = "warn"
 
 [workspace.dependencies]
-futures = "0.3"
+# Only `std`: the simulator needs no executor or `select!` macros, so it builds no futures-macro.
+futures = { version = "0.3", default-features = false, features = ["std"] }
 kio-macros = { version = "0.1.0", path = "macros" }
 libc = "0.2"
 rand = "0.10.1"
@@ -38,10 +39,6 @@ include = ["/src", "/tests", "/benches", "/README.md", "/CHANGELOG.md", "/MIGRAT
 
 [package.metadata.docs.rs]
 features = ["async", "runtime", "manual", "sim", "serde", "macros"]
-
-# Compile-fail fixtures are loaded by trybuild.
-[package.metadata.cargo-shear]
-ignored-paths = ["macros/tests/ui/*.rs"]
 
 [features]
 # Lean by default: without `runtime`, the clock compiles no host timer backend, and
@@ -85,7 +82,7 @@ libc = { workspace = true }
 [dev-dependencies]
 # Bench-only: the FuturesUnordered comparison in benches/tasks.rs.
 criterion = "0.8"
-futures = "0.3"
+futures = { workspace = true }
 # Enable the async wrappers, the simulator, and the installed manual clock so the
 # tests that await them run in the merge gate.
 kio = { path = ".", features = ["async", "manual", "sim", "serde"] }

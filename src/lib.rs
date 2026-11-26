@@ -41,7 +41,10 @@
 #[doc = include_str!("../README.md")]
 struct Readme;
 
-use std::{fmt, sync::atomic::AtomicUsize};
+use std::{
+	fmt,
+	sync::atomic::{AtomicUsize, Ordering},
+};
 
 mod channel;
 mod lock;
@@ -157,6 +160,21 @@ impl std::error::Error for Closed {}
 pub(crate) struct Counts {
 	pub producers: AtomicUsize,
 	pub consumers: AtomicUsize,
+}
+
+impl Counts {
+	/// Add a consumer only while one already exists, so demand never goes from zero to one here.
+	#[allow(
+		deprecated,
+		reason = "its replacement, `try_update`, needs Rust 1.95, above the 1.91 floor"
+	)]
+	pub fn join_consumers(&self) -> bool {
+		self.consumers
+			.fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+				(count > 0).then(|| count + 1)
+			})
+			.is_ok()
+	}
 }
 
 impl Default for Counts {

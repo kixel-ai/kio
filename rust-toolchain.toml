@@ -4,7 +4,7 @@
 # llvm-objcopy that leaves the LINKEDIT string pool 4-byte aligned, and macOS
 # 27's dyld refuses to load such an image, which breaks release-profile proc
 # macros such as kio-macros there. flake.nix reads this file.
-channel = "1.98.1"
+channel = "1.100.0"
 # Minimal, not default: the default profile adds rust-docs, 677 MB and 67k files
 # that every CI run's dev shell would download, patch, and link.
 profile = "minimal"

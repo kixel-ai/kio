@@ -26,7 +26,8 @@ kio::clock::sim::run(async {
 });
 ```
 
-The [API documentation](https://docs.rs/kio/) tours each type and cargo feature, and
+The [API documentation](https://docs.rs/kio/) tours each type and cargo feature (it
+covers 0.6.4; for the Git version, run `cargo doc -p kio --features sim --open`), and
 [MIGRATE.md](MIGRATE.md) says how to update your code across breaking changes.
 
 Originally built for [moq](https://github.com/moq-dev/moq), and generic enough to be useful on its own.
