@@ -20,18 +20,20 @@
 //!
 //! # Verification
 //!
-//! The append and read paths are written in Verus's `verus!` dialect, and `just verify`
-//! proves them: an entry a reader returns is the one the writer wrote at that index, and
-//! a slot's address never changes while it holds an entry. Plain builds erase the proof.
-//! The proof trusts three things it does not check, each marked `TRUSTED` below:
+//! The append, evict, and read paths are written in Verus's `verus!` dialect, and
+//! `just verify` proves them: a reader only returns a slot the writer fully wrote and
+//! published, in the segment and at the offset its index names, and a slot's address
+//! never changes once written. It does not prove the converse, that every index below
+//! the committed end reads as present. Plain builds erase the proof. The proof trusts
+//! three things it does not check, each marked `TRUSTED` below:
 //!
 //! - the atomics' orderings ([`atomic`]): Verus reasons as if every access were
 //!   sequentially consistent;
 //! - a segment's allocation and layout ([`Segment::allocate`], [`Segment::slot`]);
 //! - epoch reclamation ([`pinned`]): a segment a pinned read reached stays allocated
-//!   until the pin drops. Eviction, the hint check in [`Reader::read`], and the frees are
-//!   plain Rust outside the proof, and must keep the ledger's invariant as the verified
-//!   code does.
+//!   until the pin drops. Retiring and freeing segments, the base, and the hint check in
+//!   [`Reader::read`] sit outside the proof, so nothing proves an evicted segment
+//!   unreachable to a pinned reader.
 
 // Plain builds erase the proof, which is all that reads the ghost state.
 #![cfg_attr(
@@ -1601,7 +1603,8 @@ impl<T> Clone for Reader<T> {
 		Self {
 			shared: self.shared.clone(),
 			hint: self.hint,
-			// Outside the proof: a clone holds the same segment, so the same ghost state.
+			// TRUSTED: outside the proof; a clone holds the same segment, so the same ghost
+			// state.
 			reached: Tracked::assume_new(),
 		}
 	}
