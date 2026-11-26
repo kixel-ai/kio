@@ -148,6 +148,9 @@ impl fmt::Display for Failed {
 }
 
 /// Fires reactors' actions in a seeded random order.
+///
+/// Single-threaded: every wake must come from an action polled in [`Self::step`], or the
+/// final probe can report a wake from elsewhere as lost.
 pub struct Explorer {
 	seed: u64,
 	rng: StdRng,
@@ -275,18 +278,26 @@ impl Explorer {
 		for (reactor, slots) in self.slots.iter().enumerate() {
 			for action in 0..slots.len() {
 				let polled = catch_unwind(AssertUnwindSafe(|| reactors[reactor].poll_action(action, &noop)));
-				if !matches!(polled, Ok(Poll::Pending)) {
-					let action = reactors[reactor].actions()[action];
-					self.trace.push(Event {
-						reactor,
-						action,
-						fired: true,
-					});
-					return Err(self.fail(Failure::LostWakeup {
-						reactor: self.labels[reactor].clone(),
-						action,
-					}));
-				}
+				let label = self.labels[reactor].clone();
+				let name = reactors[reactor].actions()[action];
+				let failure = match polled {
+					Ok(Poll::Pending) => continue,
+					Ok(Poll::Ready(())) => Failure::LostWakeup {
+						reactor: label,
+						action: name,
+					},
+					Err(panic) => Failure::Panic {
+						reactor: label,
+						action: name,
+						message: message(&*panic),
+					},
+				};
+				self.trace.push(Event {
+					reactor,
+					action: name,
+					fired: true,
+				});
+				return Err(self.fail(failure));
 			}
 		}
 		Ok(())

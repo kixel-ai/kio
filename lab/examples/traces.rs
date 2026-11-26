@@ -21,6 +21,8 @@ fn main() {
 	};
 	let dir = PathBuf::from(dir);
 	let seeds: u64 = seeds.parse().expect("seeds is a count");
+	// TLC accepts an empty trace suite without checking anything.
+	assert!(seeds > 0, "seeds must be at least 1");
 
 	for (name, config) in Config::all() {
 		let traces: Vec<Vec<String>> = (0..seeds)
