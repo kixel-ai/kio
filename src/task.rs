@@ -1137,6 +1137,53 @@ mod tests {
 		assert_eq!(b_polls.load(Ordering::SeqCst), 1, "one poll, not two");
 	}
 
+	/// A removed task's leftover waker firing into its reused slot costs the new
+	/// occupant at most one spurious poll; the occupant keeps its own key and
+	/// still finishes on its own wake.
+	#[test]
+	fn a_removed_tasks_wake_into_a_reused_slot_is_harmless() {
+		let mut tasks = Tasks::new();
+		let waiter = Waiter::noop();
+
+		// Two occupants park, so each slot's waker was handed out, then are removed.
+		let (_a_gate, _c_gate) = (crate::Producer::new(false), crate::Producer::new(false));
+		let a = tasks.insert(gated(_a_gate.consume(), Arc::new(AtomicUsize::new(0))));
+		let c = tasks.insert(gated(_c_gate.consume(), Arc::new(AtomicUsize::new(0))));
+		assert!(tasks.poll(&waiter).is_pending());
+		let stale = tasks.wakers.clone();
+		assert!(tasks.remove(a).is_some());
+		assert!(tasks.remove(c).is_some());
+
+		// Both slots are reused, and the new occupants take their first polls.
+		let (b_gate, b_polls) = (crate::Producer::new(false), Arc::new(AtomicUsize::new(0)));
+		let b = tasks.insert(gated(b_gate.consume(), b_polls.clone()));
+		let (_d_gate, d_polls) = (crate::Producer::new(false), Arc::new(AtomicUsize::new(0)));
+		let d = tasks.insert(gated(_d_gate.consume(), d_polls.clone()));
+		assert_eq!(tasks.children.len(), 2, "b and d reuse the removed slots");
+		assert!(tasks.poll(&waiter).is_pending());
+
+		// The removed tasks' wakers fire: one spurious poll each, then nothing.
+		for waker in &stale {
+			waker.wake_by_ref();
+		}
+		assert!(tasks.poll(&waiter).is_pending());
+		assert!(tasks.poll(&waiter).is_pending());
+		let polls = |polls: &AtomicUsize| polls.load(Ordering::SeqCst);
+		assert_eq!((polls(&b_polls), polls(&d_polls)), (2, 2), "one spurious poll each");
+
+		// Keys still name the live occupants, never the removed ones.
+		assert!(tasks.remove(a).is_none());
+		assert!(tasks.remove(c).is_none());
+		assert!(tasks.remove(d).is_some());
+
+		// b finishes on its own wake and is handed back.
+		open(&b_gate);
+		let mut finished = 0;
+		assert!(tasks.poll_each(&waiter, |_, ()| finished += 1).is_ready());
+		assert_eq!((finished, polls(&b_polls)), (1, 3));
+		assert!(tasks.remove(b).is_none(), "a finished task's key names nothing");
+	}
+
 	/// Counts the owner's wakes.
 	struct Wakes(AtomicUsize);
 

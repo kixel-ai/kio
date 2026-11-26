@@ -70,7 +70,7 @@ use syn::{
 ///   `let`, still stores it and fails as a use after move: rename one of them.
 /// - The body ends in its `Poll::Ready` value. Polling a `Done` machine panics.
 /// - `Name` is `Send` when every stored local is, by Rust's own auto impl. A `!Send`
-///   local reports its type and its wait (`NameStep`), not the local itself.
+///   local's error names its type and its wait (`NameStep`).
 ///
 /// Not supported:
 ///
@@ -797,7 +797,7 @@ fn borrows(ty: &Type) -> Option<Span> {
 				self.0.get_or_insert(lifetime.span());
 			}
 		}
-		fn visit_type_bare_fn_mut(&mut self, _: &mut syn::TypeBareFn) {}
+		fn visit_type_fn_ptr_mut(&mut self, _: &mut syn::TypeFnPtr) {}
 		fn visit_parenthesized_generic_arguments_mut(&mut self, _: &mut syn::ParenthesizedGenericArguments) {}
 	}
 	let mut borrows = Borrows::default();
