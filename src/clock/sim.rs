@@ -419,6 +419,18 @@ fn run_with<F: IntoFuture>(seed: u64, config: Config, future: F) -> F::Output {
 	enter(seed, None, config, future)
 }
 
+/// [`run_seeded`] under `pct` with one priority level and no change points, for a test
+/// outside this module that watches only the yield demotion.
+#[cfg(test)]
+#[track_caller]
+pub(crate) fn run_pct<F: IntoFuture>(future: F) -> F::Output {
+	let config = Config {
+		policy: schedule::Policy::Pct { depth: 1, steps: 1 },
+		probe: false,
+	};
+	enter(0, None, config, future)
+}
+
 #[track_caller]
 fn enter<F: IntoFuture>(seed: u64, replay: Option<u64>, config: Config, future: F) -> F::Output {
 	let location = Location::caller();
@@ -669,10 +681,6 @@ impl Children {
 	/// Which of the `woken` children, given by priority, runs next, or `None` to leave the
 	/// rest for the owner's next poll. A pass that `ran` nothing yet always runs one.
 	pub(crate) fn pick(&self, woken: &[Priority], ran: bool) -> Option<usize> {
-		if self.probing {
-			// Every child, once each, in slot order.
-			return Some(0);
-		}
 		let other = {
 			let running = self.runtime.running.get();
 			let ready = self.runtime.ready.0.lock().unwrap();

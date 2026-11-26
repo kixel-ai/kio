@@ -674,52 +674,73 @@ impl<T: Task> Tasks<T> {
 			}
 		}
 
-		let mut priorities = Vec::with_capacity(woken.len());
+		if children.probing() {
+			// Every child, once each, in slot order.
+			for index in woken {
+				self.poll_scheduled(children, index, done);
+			}
+			return;
+		}
+
+		let mut priorities: Vec<_> = woken
+			.iter()
+			.map(|&index| self.sim[index].priority.map_or(0, |(_, priority)| priority))
+			.collect();
 		let mut ran = false;
 		while !woken.is_empty() {
-			priorities.clear();
-			priorities.extend(
-				woken
-					.iter()
-					.map(|&index| self.sim[index].priority.map_or(0, |(_, priority)| priority)),
-			);
 			let Some(pick) = children.pick(&priorities, ran) else {
 				for index in woken {
 					self.wakers[index].wake_by_ref();
 				}
 				return;
 			};
+			priorities.remove(pick);
 			let index = woken.remove(pick);
 			ran = true;
+			self.poll_scheduled(children, index, done);
+		}
+	}
 
-			let events = children.events();
-			let occupant = self.children[index].as_mut().expect("woken slot is occupied");
-			let cx = Context::from_waker(&self.wakers[index]);
-			let child_waiter = occupant.park.hold(&cx);
-			let poll = {
-				let _scope = crate::coop::child();
-				occupant.task.poll(child_waiter)
-			};
-			if children.probing() && (poll.is_ready() || children.events() != events) {
-				children.blame(self.sim[index].location, index);
-			}
-			match poll {
-				Poll::Ready(output) => {
-					// A finishing poll is a step too.
-					if let Some((_, mut priority)) = self.sim[index].priority.take() {
-						children.ran(&mut priority, false);
-					}
-					let occupant = self.children[index].take().expect("polled slot is occupied");
-					self.free.push(index);
-					self.len -= 1;
-					done(occupant.task, output);
+	/// Poll the child in slot `index` for [`pass_scheduled`](Self::pass_scheduled).
+	#[cfg(feature = "sim")]
+	fn poll_scheduled(
+		&mut self,
+		children: &crate::clock::sim::Children,
+		index: usize,
+		done: &mut impl FnMut(T, T::Output),
+	) {
+		let word = &self.chunks[index / CHUNK_SLOTS].words[(index % CHUNK_SLOTS) / WORD_BITS];
+		let bit = 1 << (index % WORD_BITS);
+		// A sibling that woke it earlier in this pass already set its bit, which then says
+		// nothing of a self-wake, so that poll never counts as a yield.
+		let woken_before = word.load(Ordering::Acquire) & bit != 0;
+		let events = children.events();
+		let occupant = self.children[index].as_mut().expect("woken slot is occupied");
+		let cx = Context::from_waker(&self.wakers[index]);
+		let child_waiter = occupant.park.hold(&cx);
+		let poll = {
+			let _scope = crate::coop::child();
+			occupant.task.poll(child_waiter)
+		};
+		if children.probing() && (poll.is_ready() || children.events() != events) {
+			children.blame(self.sim[index].location, index);
+		}
+		match poll {
+			Poll::Ready(output) => {
+				// A finishing poll is a step too.
+				if let Some((_, mut priority)) = self.sim[index].priority.take() {
+					children.ran(&mut priority, false);
 				}
-				Poll::Pending => {
-					let word = &self.chunks[index / CHUNK_SLOTS].words[(index % CHUNK_SLOTS) / WORD_BITS];
-					let yielded = word.load(Ordering::Acquire) & (1 << (index % WORD_BITS)) != 0;
-					if let Some((_, priority)) = &mut self.sim[index].priority {
-						children.ran(priority, yielded);
-					}
+				let occupant = self.children[index].take().expect("polled slot is occupied");
+				self.free.push(index);
+				self.len -= 1;
+				done(occupant.task, output);
+			}
+			Poll::Pending => {
+				let word = &self.chunks[index / CHUNK_SLOTS].words[(index % CHUNK_SLOTS) / WORD_BITS];
+				let yielded = !woken_before && word.load(Ordering::Acquire) & bit != 0;
+				if let Some((_, priority)) = &mut self.sim[index].priority {
+					children.ran(priority, yielded);
 				}
 			}
 		}
@@ -1499,5 +1520,53 @@ mod tests {
 				assert_eq!(done.get(), 1);
 			})
 			.await;
+	}
+
+	/// Under `pct`, a child a sibling woke earlier in the same pass keeps its rank when it
+	/// parks without waking itself: only a self-wake is a yield.
+	#[cfg(feature = "sim")]
+	#[test]
+	fn a_sibling_wake_is_not_a_yield() {
+		use std::{cell::RefCell, rc::Rc, task::Waker};
+
+		type Wakers = Rc<RefCell<[Option<Waker>; 2]>>;
+		// Its second poll wakes the other child, unless that one already had its own.
+		fn child(me: usize, wakers: Wakers, polls: Rc<[AtomicUsize; 2]>) -> impl FnMut(&Waiter) -> Poll<()> {
+			move |waiter| {
+				let n = polls[me].fetch_add(1, Ordering::Relaxed) + 1;
+				if n == 2
+					&& polls[1 - me].load(Ordering::Relaxed) < 2
+					&& let Some(other) = &wakers.borrow()[1 - me]
+				{
+					other.wake_by_ref();
+				}
+				wakers.borrow_mut()[me] = Some(waiter.waker().clone());
+				Poll::Pending
+			}
+		}
+
+		crate::clock::sim::run_pct(async {
+			let wakers: Wakers = Rc::default();
+			let polls = Rc::new([AtomicUsize::new(0), AtomicUsize::new(0)]);
+			let mut tasks = Tasks::new();
+			for me in 0..2 {
+				tasks.push(child(me, wakers.clone(), polls.clone()));
+			}
+			// One poll of the set, which runs its passes until no child is woken.
+			let pass = |waiter: &Waiter, tasks: &mut Tasks<_>| {
+				assert!(tasks.poll(waiter).is_pending());
+				Poll::Ready(())
+			};
+			crate::wait(|waiter| pass(waiter, &mut tasks)).await;
+			for waker in wakers.borrow().iter().flatten() {
+				waker.wake_by_ref();
+			}
+			crate::wait(|waiter| pass(waiter, &mut tasks)).await;
+			assert!(polls.iter().all(|polls| polls.load(Ordering::Relaxed) >= 2));
+			for sim in &tasks.sim {
+				let (_, priority) = sim.priority.expect("drawn at the first pass");
+				assert!(priority >= 1, "demoted to {priority}");
+			}
+		});
 	}
 }

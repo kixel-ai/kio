@@ -10,12 +10,13 @@
 //! - `pct[:<depth>[:<steps>]]`: probabilistic concurrency testing (Burckhardt et al.,
 //!   ASPLOS 2010). Every task and child draws a random priority and the highest ready
 //!   one runs; at `depth - 1` steps drawn from the first `steps`, the one running drops
-//!   below every initial priority. It finds a bug that needs `depth` ordering
-//!   constraints in a run of `n` tasks and `steps` steps with probability at least
-//!   `1 / (n * steps^(depth - 1))`. Defaults to depth 3 over 1000 steps.
+//!   below every initial priority. Defaults to depth 3 over 1000 steps.
 //!
 //! A unit that wakes itself while it runs yields: under `pct` it drops below everything,
-//! so a spin loop cannot starve the rest the way a fixed priority would let it.
+//! so a spin loop cannot starve the rest the way a fixed priority would let it. That
+//! demotion voids the paper's bound (a bug needing `depth` ordering constraints among `n`
+//! tasks and `steps` steps found with probability at least `1 / (n * steps^(depth - 1))`):
+//! an order that needs a self-waking unit to run twice in a row is never drawn.
 //!
 //! Draws come from their own generator, seeded from the run's seed, so a schedule
 //! replays bit-exact from its seed and leaves [`rng`](crate::clock::rng) draws unchanged.

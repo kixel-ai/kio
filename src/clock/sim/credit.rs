@@ -114,7 +114,7 @@ struct Place {
 	arrival: u64,
 }
 
-/// What a step touched, a bit per object, to tell which steps commute.
+/// What a poll touched, a bit per object, to tell which polls commute.
 const CREDIT: u64 = 1;
 const LINE: u64 = 2;
 fn sub_bit(sub: usize) -> u64 {
@@ -161,7 +161,8 @@ impl Plan {
 pub(super) struct Observed {
 	/// Every distinct session state reached.
 	pub states: HashSet<u64>,
-	/// Each step: the unit that took it and what it touched.
+	/// Each poll that changed the session, the scheduler's unit of interleaving: the
+	/// unit that ran it and what it touched.
 	pub steps: Vec<(usize, u64)>,
 }
 
@@ -187,7 +188,7 @@ struct Session {
 	streams: Vec<Vec<WaiterList>>,
 	plan: Plan,
 	observed: Rc<RefCell<Observed>>,
-	/// What the step running now has touched.
+	/// What the poll running now has touched.
 	touched: u64,
 }
 
@@ -349,7 +350,8 @@ impl Session {
 		}
 		self.touched |= CREDIT | LINE;
 		let granted = std::mem::take(&mut self.granted[sub]);
-		if self.fixture.bug == Some(Bug::StealCredit) && granted && self.credit() {
+		// The bug is the out-of-line open: a head takes the normal path, resets included.
+		if self.fixture.bug == Some(Bug::StealCredit) && granted && self.credit() && !self.is_head(sub) {
 			self.open(sub);
 			return self.leave(sub);
 		}
@@ -445,18 +447,33 @@ impl Session {
 		hasher.finish()
 	}
 
-	/// Record the change `unit` just made, and publish it.
-	fn observe(&mut self, unit: usize) {
+	/// Record the state a change reached, and publish it.
+	fn observe_state(&mut self) {
 		if let Ok(mut changes) = self.changes.write() {
 			*changes = ();
 		}
-		let mut observed = self.observed.borrow_mut();
-		observed.states.insert(self.digest());
-		observed.steps.push((unit, std::mem::take(&mut self.touched)));
+		self.observed.borrow_mut().states.insert(self.digest());
+	}
+
+	/// End the poll `unit` ran, logging what it touched when it `changed` anything, so
+	/// the next poll's footprint starts empty either way.
+	fn end_poll(&mut self, unit: usize, changed: bool) {
+		let touched = std::mem::take(&mut self.touched);
+		if changed {
+			self.observed.borrow_mut().steps.push((unit, touched));
+		}
+	}
+
+	/// Record the change `unit`'s poll made, and publish it.
+	fn observe(&mut self, unit: usize) {
+		self.observe_state();
+		self.end_poll(unit, true);
 	}
 
 	/// Once quiet: every group was sent and freed or given up, no credit leaked, and each
-	/// subscription's best group reached the peer.
+	/// subscription's best group reached the peer or was reset for a higher priority, as
+	/// the spec's `TopDelivered` allows: both end `Closed`, and nothing in its own
+	/// subscription outranks it, so only a higher priority can reset it.
 	fn check_quiet(&self) {
 		for sub in 0..self.fixture.subs {
 			for group in 0..self.fixture.groups {
@@ -508,9 +525,14 @@ fn track(session: Handle, sub: usize) -> impl FnMut(&Waiter) -> Poll<()> {
 		// Wakes go out once the session is released.
 		let _hold = crate::hold();
 		let mut session = session.borrow_mut();
+		let mut changed = false;
 		while session.step(sub) {
-			session.observe(track_unit(sub));
+			session.observe_state();
+			changed = true;
 		}
+		// One footprint per poll, the last pass's reads included: the scheduler cannot
+		// interleave between passes.
+		session.end_poll(track_unit(sub), changed);
 		if session.finished(sub) {
 			return Poll::Ready(());
 		}
@@ -787,7 +809,7 @@ mod tests {
 
 	/// The spike's numbers, as Markdown tables: each bug's catch rate, first catching seed,
 	/// and cost per seed under each schedule, with and without the probe; then the bounded
-	/// explorer against random and PCT schedules on fixed data, and how many adjacent steps
+	/// explorer against random and PCT schedules on fixed data, and how many adjacent polls
 	/// commute, the reduction partial-order methods could find.
 	///
 	/// `cargo test --release -p kio --lib credit::tests::report -- --ignored --nocapture`
@@ -857,7 +879,14 @@ mod tests {
 		println!();
 		println!("| bug | probe | method | data seeds caught / {DATA} | median runs to catch | ms total |");
 		println!("|---|---|---|---|---|---|");
-		// The ordering bug: the lost wakeups fall to the first run of every method.
+		// The ordering bug: the lost wakeups fall to the first run of every method. Any
+		// other failure means the injection broke more than the line order.
+		let line_order = |failure: &String| {
+			assert!(
+				failure.starts_with("line order"),
+				"the ordering bug failed otherwise: {failure}"
+			);
+		};
 		{
 			let (bug, probe) = (Bug::StealCredit, false);
 			let fixture = Fixture {
@@ -872,6 +901,7 @@ mod tests {
 					format!("explore, branch at the first {bound} choices"),
 					Box::new(move |data| {
 						let (runs, failures) = explore(fixture, data, probe, bound, LIMIT, true, &observed);
+						failures.iter().for_each(line_order);
 						(!failures.is_empty()).then_some(runs)
 					}),
 				));
@@ -884,7 +914,8 @@ mod tests {
 					Box::new(move |data| {
 						(0..LIMIT)
 							.find(|&seed| {
-								run(fixture, data, seed as u64, config(policy.clone(), probe), &observed).is_some()
+								let failure = run(fixture, data, seed as u64, config(policy.clone(), probe), &observed);
+								failure.as_ref().inspect(|failure| line_order(failure)).is_some()
 							})
 							.map(|seed| seed + 1)
 					}),
@@ -906,7 +937,13 @@ mod tests {
 
 		// Distinct session states each method reaches on one data seed in a fixed budget.
 		println!();
-		println!("| method (clean session, data seed 0, 1 s) | runs | distinct states | states per s |");
+		// A clean run that fails would count states it reached on the way.
+		let clean = |method: &str, seed: u64, failure: Option<String>| {
+			assert_eq!(failure, None, "a clean session failed under {method}, seed {seed}");
+		};
+		println!(
+			"| method (clean session, data seed 0; random and PCT for 1 s, explore until done or 20000 runs) | runs | distinct states observed | states per s |"
+		);
 		println!("|---|---|---|---|");
 		let budget = std::time::Duration::from_secs(1);
 		for bound in [8, 12, 16] {
@@ -914,7 +951,8 @@ mod tests {
 			let observed = Rc::new(RefCell::new(Observed::default()));
 			let start = Instant::now();
 			let limit = 20_000;
-			let (runs, _) = explore(Fixture::SMALL, 0, false, bound, limit, false, &observed);
+			let (runs, failures) = explore(Fixture::SMALL, 0, false, bound, limit, false, &observed);
+			clean("explore", 0, failures.into_iter().next());
 			let states = observed.borrow().states.len();
 			let secs = start.elapsed().as_secs_f64();
 			let exhausted = if runs < limit { "exhausted" } else { "cut off" };
@@ -928,7 +966,11 @@ mod tests {
 			let start = Instant::now();
 			let mut runs = 0;
 			while start.elapsed() < budget {
-				run(Fixture::SMALL, 0, runs, config(policy.clone(), false), &observed);
+				clean(
+					name,
+					runs,
+					run(Fixture::SMALL, 0, runs, config(policy.clone(), false), &observed),
+				);
 				observed.borrow_mut().steps.clear();
 				runs += 1;
 			}
@@ -939,12 +981,16 @@ mod tests {
 			);
 		}
 
-		// How often two adjacent steps by different units touch disjoint state, so their
+		// How often two adjacent polls by different units touch disjoint state, so their
 		// order cannot matter.
 		let observed = Rc::new(RefCell::new(Observed::default()));
 		let (mut pairs, mut independent) = (0usize, 0usize);
 		for seed in 0..200 {
-			run(Fixture::SMALL, seed, seed, config(Policy::Random, false), &observed);
+			clean(
+				"random",
+				seed,
+				run(Fixture::SMALL, seed, seed, config(Policy::Random, false), &observed),
+			);
 			let steps = std::mem::take(&mut observed.borrow_mut().steps);
 			for pair in steps.windows(2) {
 				let ((a, a_touched), (b, b_touched)) = (pair[0], pair[1]);
@@ -956,7 +1002,7 @@ mod tests {
 		}
 		println!();
 		println!(
-			"Adjacent steps by different units that commute: {independent} of {pairs} ({:.1}%)",
+			"Adjacent polls by different units that commute: {independent} of {pairs} ({:.1}%)",
 			100.0 * independent as f64 / pairs as f64
 		);
 		let _ = std::panic::take_hook();
