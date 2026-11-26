@@ -4,8 +4,8 @@
 //!
 //! A relay with demand pulls through one parent: its route's next hop, or a neighbour that
 //! advertised a warm copy. Readers are ranked, and a relay takes a warm copy only from a
-//! neighbour feeding a reader ranked below every reader it feeds itself, so warm pulls
-//! never form a loop. A move to a new parent keeps the old one until the new one answers.
+//! neighbour whose last advert ranked below every reader it feeds itself: a local rule,
+//! loop-free only once adverts are current. A move keeps the old parent until the new answers.
 //!
 //! The relay sees its neighbours only through what each last told it; the network that
 //! delivers those words late, and the route layer, stay outside. Relays are numbered from

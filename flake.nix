@@ -45,21 +45,27 @@
         in
         {
           packages.quest = quest-cli;
-          devShells.default = pkgs.mkShell {
-            packages = with pkgs; [
-              toolchain
-              quest-cli
-              just
-              jq
-              git
-              gh
-              actionlint
-              taplo
-              nixfmt
-            ];
-          };
-          # lab/pure-machine's Charon, Aeneas, and Lean: `nix develop .#prove`.
-          devShells.prove = import ./lab/pure-machine/prove.nix { inherit pkgs; };
+          # lab/pure-machine's Charon, Aeneas, and Lean: `nix develop .#prove`, on Linux only,
+          # where Aeneas publishes a release.
+          devShells =
+            pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+              prove = import ./lab/pure-machine/prove.nix { inherit pkgs; };
+            }
+            // {
+              default = pkgs.mkShell {
+                packages = with pkgs; [
+                  toolchain
+                  quest-cli
+                  just
+                  jq
+                  git
+                  gh
+                  actionlint
+                  taplo
+                  nixfmt
+                ];
+              };
+            };
           formatter = pkgs.nixfmt;
           checks.quest-tree = pkgs.runCommand "quest-tree" { nativeBuildInputs = [ quest-cli ]; } ''
             quest --root ${self} check

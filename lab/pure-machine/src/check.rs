@@ -135,8 +135,14 @@ fn search<M: Explore>(init: M, rules: bool, goal: impl Fn(&M, bool) -> bool) -> 
 	let mut out = Vec::new();
 	// The index of the first node a level deeper than the one being expanded.
 	let mut level_end = 1;
+	// A rule broken by a step out of this level, reported once the level's quiet states,
+	// whose traces are a step shorter, are checked.
+	let mut deeper = None;
 	while let Some((state, index)) = queue.pop_front() {
 		if index as usize >= level_end {
+			if let Some(broken) = deeper {
+				return broken;
+			}
 			stats.depth += 1;
 			level_end = nodes.len();
 		}
@@ -151,8 +157,12 @@ fn search<M: Explore>(init: M, rules: bool, goal: impl Fn(&M, bool) -> bool) -> 
 			}
 			quiet = false;
 			stats.generated += 1;
+			if deeper.is_some() {
+				continue;
+			}
 			if rules && let Err(rule) = state.transition(&next) {
-				return broken(&init, &nodes, index, Some(event), rule);
+				deeper = Some(broken(&init, &nodes, index, Some(event), rule));
+				continue;
 			}
 			if !seen.insert(fingerprint(&next)) {
 				continue;
@@ -166,7 +176,8 @@ fn search<M: Explore>(init: M, rules: bool, goal: impl Fn(&M, bool) -> bool) -> 
 			});
 			stats.distinct += 1;
 			if rules && let Err(rule) = next.invariant() {
-				return broken(&init, &nodes, child, None, rule);
+				deeper = Some(broken(&init, &nodes, child, None, rule));
+				continue;
 			}
 			queue.push_back((next, child));
 		}
@@ -180,7 +191,7 @@ fn search<M: Explore>(init: M, rules: bool, goal: impl Fn(&M, bool) -> bool) -> 
 			return broken(&init, &nodes, index, None, rule);
 		}
 	}
-	Search::Done(stats)
+	deeper.unwrap_or(Search::Done(stats))
 }
 
 fn broken<M: Explore>(

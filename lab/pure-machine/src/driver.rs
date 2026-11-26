@@ -1,36 +1,44 @@
-//! The thin `kio` shell a [`Session`] runs in: one lock around the machine, a waiter list
-//! per subscription task, and the outputs turned into wakes and returned effects.
+//! The thin `kio` shell a [`Session`] runs in: one lock around the machine and its
+//! [`Transport`], a waiter list per subscription task, and the outputs turned into wakes and
+//! stream effects.
 //!
 //! Each subscription's task calls [`Driver::poll_step`] when woken, as moq-net's
 //! `TrackRun::poll_step` does, and the transport reports streams sent whole and freed.
 //! Everything the machine decides runs under the lock, as moq-net's `Line` does under its
-//! mutex; wakes fire after it is released.
+//! mutex, and so do its stream effects: a pass's `Reset` of another subscription's stream
+//! must not reach the transport before that subscription's earlier `Open`. Wakes fire after
+//! the lock is released.
 
 use std::sync::Mutex;
 use std::task::Poll;
 
 use crate::send_credit::{Event, Output, Session};
 
-/// A session's send credit, shared by its subscriptions' tasks and its transport.
-pub struct Driver<const S: usize, const G: usize> {
-	state: Mutex<State<S, G>>,
+/// Where the machine's stream effects go: take, shed, open, or reset.
+pub trait Transport {
+	/// Carry out `effect`, called under the session's lock in the order the machine decided.
+	fn apply(&mut self, effect: Output);
 }
 
-struct State<const S: usize, const G: usize> {
+/// A session's send credit, shared by its subscriptions' tasks and its transport.
+pub struct Driver<T, const S: usize, const G: usize> {
+	state: Mutex<State<T, S, G>>,
+}
+
+struct State<T, const S: usize, const G: usize> {
 	session: Session<S, G>,
+	transport: T,
 	waiters: [kio::WaiterList; S],
 	out: Vec<Output>,
 }
 
-/// What a pass asks its task to do: take, shed, open, or reset streams.
-pub type Effects = Vec<Output>;
-
-impl<const S: usize, const G: usize> Driver<S, G> {
-	/// Drive `session`.
-	pub fn new(session: Session<S, G>) -> Self {
+impl<T: Transport, const S: usize, const G: usize> Driver<T, S, G> {
+	/// Drive `session`, its effects carried out by `transport`.
+	pub fn new(session: Session<S, G>, transport: T) -> Self {
 		Self {
 			state: Mutex::new(State {
 				session,
+				transport,
 				waiters: std::array::from_fn(|_| kio::WaiterList::new()),
 				out: Vec::new(),
 			}),
@@ -38,14 +46,13 @@ impl<const S: usize, const G: usize> Driver<S, G> {
 	}
 
 	/// One pass of `sub`'s task, its cursor's cache holding `cached` and handing out `pick`
-	/// if admitted: the effects to carry out, or pending, `waiter` registered, if the pass
-	/// changed nothing.
+	/// if admitted: ready once its effects are applied, or pending, `waiter` registered, if
+	/// the pass changed nothing.
 	///
 	/// # Panics
 	///
 	/// If `pick` is not the cursor's to hand out, which is the caller's bug.
-	pub fn poll_step(&self, sub: usize, cached: u16, pick: Option<u8>, waiter: &kio::Waiter) -> Poll<Effects> {
-		let mut effects = Vec::new();
+	pub fn poll_step(&self, sub: usize, cached: u16, pick: Option<u8>, waiter: &kio::Waiter) -> Poll<()> {
 		let mut wake = [const { None }; S];
 		let parked = {
 			let mut state = self.lock();
@@ -55,14 +62,14 @@ impl<const S: usize, const G: usize> Driver<S, G> {
 				.session
 				.step(Event::Poll { sub, cached, pick }, &mut state.out)
 				.expect("the cursor hands out a cached group the session admits");
-			let parked = route(state, &mut effects, &mut wake, Some(sub));
+			let parked = route(state, &mut wake, Some(sub));
 			if parked {
 				waiter.register(&mut state.waiters[sub]);
 			}
 			parked
 		};
 		wake_all(wake);
-		if parked { Poll::Pending } else { Poll::Ready(effects) }
+		if parked { Poll::Pending } else { Poll::Ready(()) }
 	}
 
 	/// The transport sent `sub`'s stream of `group` whole.
@@ -76,7 +83,6 @@ impl<const S: usize, const G: usize> Driver<S, G> {
 	}
 
 	fn transport(&self, event: Event) {
-		let mut effects = Vec::new();
 		let mut wake = [const { None }; S];
 		{
 			let mut state = self.lock();
@@ -86,9 +92,8 @@ impl<const S: usize, const G: usize> Driver<S, G> {
 				.session
 				.step(event, &mut state.out)
 				.expect("the transport reports what happened");
-			route(state, &mut effects, &mut wake, None);
+			route(state, &mut wake, None);
 		}
-		debug_assert!(effects.is_empty(), "the transport's events only wake");
 		wake_all(wake);
 	}
 
@@ -97,16 +102,15 @@ impl<const S: usize, const G: usize> Driver<S, G> {
 		self.lock().session
 	}
 
-	fn lock(&self) -> std::sync::MutexGuard<'_, State<S, G>> {
+	fn lock(&self) -> std::sync::MutexGuard<'_, State<T, S, G>> {
 		self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 	}
 }
 
-/// Sort the machine's outputs: the waiters to wake once the lock is released move to
-/// `wake`, other effects to `effects`. Whether `polled`'s pass parked.
-fn route<const S: usize, const G: usize>(
-	state: &mut State<S, G>,
-	effects: &mut Effects,
+/// Carry out the machine's outputs: stream effects now, under the lock, and waiters to wake
+/// once it is released into `wake`. Whether `polled`'s pass parked.
+fn route<T: Transport, const S: usize, const G: usize>(
+	state: &mut State<T, S, G>,
 	wake: &mut [Option<kio::WaiterList>; S],
 	polled: Option<usize>,
 ) -> bool {
@@ -117,7 +121,7 @@ fn route<const S: usize, const G: usize>(
 			// The polled task is running: it polls again rather than waking itself.
 			Output::Wake(_) => {}
 			Output::Park(_) => parked = true,
-			other => effects.push(other),
+			effect => state.transport.apply(effect),
 		}
 	}
 	parked
@@ -147,22 +151,31 @@ mod tests {
 		}
 	}
 
+	impl Transport for Vec<Output> {
+		fn apply(&mut self, effect: Output) {
+			self.push(effect);
+		}
+	}
+
+	impl<const S: usize, const G: usize> Driver<Vec<Output>, S, G> {
+		/// The effects applied since the last call.
+		fn applied(&self) -> Vec<Output> {
+			std::mem::take(&mut self.lock().transport)
+		}
+	}
+
 	/// A parked task is woken when the stream holding the credit is freed, and then opens.
 	#[test]
 	fn wakes_the_parked_open() {
-		let driver = Driver::new(configs::base(None).session);
+		let driver = Driver::new(configs::base(None).session, Vec::new());
 		let counts: [Arc<Count>; 2] = Default::default();
 		let waiters = counts.clone().map(|count| kio::Waiter::new(count.into()));
 
 		// Subscription 1 takes group 3 and opens it with the only credit.
-		let Poll::Ready(took) = driver.poll_step(0, 0b111, Some(3), &waiters[0]) else {
-			panic!("the cursor hands out a group");
-		};
-		assert_eq!(took, vec![Output::Take { sub: 0, group: 3 }]);
-		let Poll::Ready(opened) = driver.poll_step(0, 0b011, Some(2), &waiters[0]) else {
-			panic!("the open takes the credit");
-		};
-		assert_eq!(opened[0], Output::Open { sub: 0, group: 3 });
+		assert!(driver.poll_step(0, 0b111, Some(3), &waiters[0]).is_ready());
+		assert_eq!(driver.applied(), vec![Output::Take { sub: 0, group: 3 }]);
+		assert!(driver.poll_step(0, 0b011, Some(2), &waiters[0]).is_ready());
+		assert_eq!(driver.applied()[0], Output::Open { sub: 0, group: 3 });
 
 		// Subscription 2 takes group 1, waits for credit, and parks.
 		assert!(driver.poll_step(1, 0b111, Some(1), &waiters[1]).is_ready());
@@ -180,14 +193,13 @@ mod tests {
 			1,
 			"the freed stream wakes the open that asked"
 		);
-		let Poll::Ready(effects) = driver.poll_step(1, 0b110, Some(2), &waiters[1]) else {
-			panic!("the woken open takes the credit");
-		};
-		assert_eq!(effects[0], Output::Open { sub: 1, group: 1 });
+		driver.applied();
+		assert!(driver.poll_step(1, 0b110, Some(2), &waiters[1]).is_ready());
+		assert_eq!(driver.applied()[0], Output::Open { sub: 1, group: 1 });
 	}
 
 	/// Replay a schedule through the driver, landing where the machine alone does.
-	pub(crate) fn replay<const S: usize, const G: usize>(driver: &Driver<S, G>, events: &[Event]) {
+	fn replay<T: Transport, const S: usize, const G: usize>(driver: &Driver<T, S, G>, events: &[Event]) {
 		let waiter = kio::Waiter::noop();
 		for &event in events {
 			match event {
@@ -200,6 +212,7 @@ mod tests {
 		}
 	}
 
+	/// The transport sees every effect, in the machine's order.
 	#[test]
 	fn replays_like_the_machine() {
 		for world in [
@@ -209,9 +222,21 @@ mod tests {
 			configs::streams(None),
 		] {
 			let (end, events) = world.run();
-			let driver = Driver::new(world.session);
+			let driver = Driver::new(world.session, Vec::new());
 			replay(&driver, &events);
 			assert_eq!(driver.session(), end.session);
+
+			let mut session = world.session;
+			let mut effects = Vec::new();
+			for &event in &events {
+				let mut out = Vec::new();
+				session.step(event, &mut out).expect("a recorded step replays");
+				effects.extend(
+					out.into_iter()
+						.filter(|o| !matches!(o, Output::Wake(_) | Output::Park(_))),
+				);
+			}
+			assert_eq!(driver.applied(), effects);
 		}
 	}
 }

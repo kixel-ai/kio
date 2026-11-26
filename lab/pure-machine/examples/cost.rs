@@ -6,11 +6,32 @@
 //! `none` builds the schedules and stops, the baseline to subtract.
 
 use std::hint::black_box;
-use std::task::Poll;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::task::Wake;
 
-use kio_pure_machine::driver::Driver;
+use kio_pure_machine::driver::{Driver, Transport};
 use kio_pure_machine::send_credit::world::configs;
-use kio_pure_machine::send_credit::{Event, Session};
+use kio_pure_machine::send_credit::{Event, Output, Session};
+
+/// A task waker that only counts, so parks register and wakes call a real waker.
+#[derive(Default)]
+struct Count(AtomicUsize);
+
+impl Wake for Count {
+	fn wake(self: Arc<Self>) {
+		self.0.fetch_add(1, Ordering::Relaxed);
+	}
+}
+
+/// A transport that only looks at each effect.
+struct Sink;
+
+impl Transport for Sink {
+	fn apply(&mut self, effect: Output) {
+		black_box(effect);
+	}
+}
 
 fn main() {
 	let mut args = std::env::args().skip(1);
@@ -26,7 +47,8 @@ fn main() {
 		.collect();
 	let events: usize = runs.iter().map(|(_, events)| events.len()).sum();
 
-	let waiter = kio::Waiter::noop();
+	let counts: [Arc<Count>; 2] = Default::default();
+	let waiters = counts.clone().map(|count| kio::Waiter::new(count.into()));
 	let mut out = Vec::with_capacity(16);
 	for _ in 0..iters {
 		for (init, events) in &runs {
@@ -43,13 +65,11 @@ fn main() {
 					black_box(&session);
 				}
 				"driver" => {
-					let driver = Driver::new(*init);
+					let driver = Driver::new(*init, Sink);
 					for &event in events {
 						match black_box(event) {
 							Event::Poll { sub, cached, pick } => {
-								if let Poll::Ready(effects) = driver.poll_step(sub, cached, pick, &waiter) {
-									black_box(effects);
-								}
+								let _ = black_box(driver.poll_step(sub, cached, pick, &waiters[sub]));
 							}
 							Event::Finished { sub, group } => driver.finished(sub, group),
 							Event::Freed => driver.freed(),
@@ -61,5 +81,6 @@ fn main() {
 			}
 		}
 	}
-	eprintln!("{mode}: {iters} x {events} events");
+	let woken: usize = counts.iter().map(|count| count.0.load(Ordering::Relaxed)).sum();
+	eprintln!("{mode}: {iters} x {events} events, {woken} wakes");
 }
