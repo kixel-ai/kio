@@ -36,6 +36,11 @@
 
 #![warn(missing_docs)]
 
+// Runs the README's example as a doctest, so it keeps building against the API.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct Readme;
+
 use std::{fmt, sync::atomic::AtomicUsize};
 
 mod channel;
