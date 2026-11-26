@@ -56,9 +56,12 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/nix
-      # Packaged together, so kio verifies against the kio-macros it ships with even
-      # before that version reaches crates.io.
-      - run: nix develop --command cargo package --locked -p kio-macros -p kio
+      # kio verifies, every feature on, against the kio-macros users will resolve: the
+      # one this run publishes beside it, else the one already on crates.io.
+      - if: needs.plan.outputs.macros == 'true'
+        run: nix develop --command cargo package --locked --all-features -p kio-macros -p kio
+      - if: needs.plan.outputs.macros != 'true'
+        run: nix develop --command cargo package --locked --all-features -p kio
 
   publish-macros:
     needs: [plan, package]
