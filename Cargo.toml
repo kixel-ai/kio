@@ -32,6 +32,9 @@ rust-version.workspace = true
 
 keywords = ["async", "producer", "consumer", "clock", "simulation"]
 categories = ["asynchronous", "concurrency", "date-and-time", "development-tools::testing"]
+# An allowlist, so the repository's tooling (quest/, agent skills, CI, Nix) stays out
+# of the published crate.
+include = ["/src", "/tests", "/benches", "/README.md", "/CHANGELOG.md", "/MIGRATE.md", "/LICENSE-*"]
 
 [package.metadata.docs.rs]
 features = ["async", "runtime", "manual", "sim", "serde", "macros"]
