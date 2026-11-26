@@ -1,9 +1,13 @@
 [workspace]
-members = [".", "macros"]
+members = [".", "macros", "spikes/pure-machine"]
 resolver = "2"
 
 [workspace.package]
 rust-version = "1.91"
+
+[workspace.lints.rust]
+# Kani compiles spikes/pure-machine's proof harnesses under `cfg(kani)`.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
 
 [workspace.lints.clippy]
 # Every suppression says why, so the next lint audit can judge it.

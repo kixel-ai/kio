@@ -1,4 +1,4 @@
-exclude = ["**/target/**", "**/.direnv/**", "**/.tmp/**"]
+exclude = ["**/target/**", "**/.direnv/**", "**/.tmp/**", "**/.lake/**"]
 
 [formatting]
 indent_string = "    "
