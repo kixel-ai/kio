@@ -199,9 +199,18 @@ impl Scheduler {
 	/// Pick the next woken child of a pass, or `None` to leave the rest for the owner's
 	/// next poll so another ready task may run first. `other` is the best priority among
 	/// the other ready tasks; a pass that ran nothing yet always runs one.
-	pub fn pick_child(&mut self, woken: &[Priority], ran: bool, other: Option<Priority>) -> Option<usize> {
+	///
+	/// Once a child of the pass `yielded`, `random` runs the rest: the next pass would draw
+	/// it alongside them, and a yield promises they run first. `pct` has demoted it below them.
+	pub fn pick_child(
+		&mut self,
+		woken: &[Priority],
+		ran: bool,
+		yielded: bool,
+		other: Option<Priority>,
+	) -> Option<usize> {
 		match self.policy {
-			Policy::Random if ran && self.rng.random_bool(0.25) => None,
+			Policy::Random if ran && !yielded && self.rng.random_bool(0.25) => None,
 			Policy::Pct { .. } => {
 				let index = self.pick(woken);
 				match other {

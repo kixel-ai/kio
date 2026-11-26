@@ -679,8 +679,9 @@ impl Children {
 	}
 
 	/// Which of the `woken` children, given by priority, runs next, or `None` to leave the
-	/// rest for the owner's next poll. A pass that `ran` nothing yet always runs one.
-	pub(crate) fn pick(&self, woken: &[Priority], ran: bool) -> Option<usize> {
+	/// rest for the owner's next poll. A pass that `ran` nothing yet always runs one, and
+	/// one where a child `yielded` stops early only under a schedule that demotes it.
+	pub(crate) fn pick(&self, woken: &[Priority], ran: bool, yielded: bool) -> Option<usize> {
 		let other = {
 			let running = self.runtime.running.get();
 			let ready = self.runtime.ready.0.lock().unwrap();
@@ -691,7 +692,10 @@ impl Children {
 				.filter_map(|id| priorities.get(id).copied())
 				.max()
 		};
-		self.runtime.schedule.borrow_mut().pick_child(woken, ran, other)
+		self.runtime
+			.schedule
+			.borrow_mut()
+			.pick_child(woken, ran, yielded, other)
 	}
 
 	/// Count a child's poll, which woke itself while it ran when `yielded`.
@@ -1765,6 +1769,34 @@ mod tests {
 					}
 					yield_now().await;
 					assert_eq!(ran.get(), 4, "{config:?} seed {seed}");
+				});
+			}
+		}
+	}
+
+	/// A task-set child that wakes itself runs again only after every sibling woken with it,
+	/// whatever the schedule, though a pass may stop early and leave them for the next.
+	#[test]
+	fn a_yielding_child_lets_its_woken_siblings_run_first() {
+		for config in [Config::default(), random(), pct()] {
+			for seed in 0..20 {
+				run_with(seed, config.clone(), async move {
+					let started = Rc::new(Cell::new(0));
+					let mut tasks = crate::Tasks::new();
+					for _ in 0..4 {
+						let started = started.clone();
+						let mut yielded = false;
+						tasks.push(move |waiter: &crate::Waiter| {
+							if !std::mem::replace(&mut yielded, true) {
+								started.set(started.get() + 1);
+								waiter.waker().wake_by_ref();
+								return Poll::Pending;
+							}
+							assert_eq!(started.get(), 4, "seed {seed}");
+							Poll::Ready(())
+						});
+					}
+					crate::wait(|waiter| tasks.poll(waiter)).await;
 				});
 			}
 		}

@@ -686,9 +686,9 @@ impl<T: Task> Tasks<T> {
 			.iter()
 			.map(|&index| self.sim[index].priority.map_or(0, |(_, priority)| priority))
 			.collect();
-		let mut ran = false;
+		let (mut ran, mut yielded) = (false, false);
 		while !woken.is_empty() {
-			let Some(pick) = children.pick(&priorities, ran) else {
+			let Some(pick) = children.pick(&priorities, ran, yielded) else {
 				for index in woken {
 					self.wakers[index].wake_by_ref();
 				}
@@ -697,18 +697,19 @@ impl<T: Task> Tasks<T> {
 			priorities.remove(pick);
 			let index = woken.remove(pick);
 			ran = true;
-			self.poll_scheduled(children, index, done);
+			yielded |= self.poll_scheduled(children, index, done);
 		}
 	}
 
-	/// Poll the child in slot `index` for [`pass_scheduled`](Self::pass_scheduled).
+	/// Poll the child in slot `index` for [`pass_scheduled`](Self::pass_scheduled),
+	/// returning whether it yielded: woke itself and stays pending.
 	#[cfg(feature = "sim")]
 	fn poll_scheduled(
 		&mut self,
 		children: &crate::clock::sim::Children,
 		index: usize,
 		done: &mut impl FnMut(T, T::Output),
-	) {
+	) -> bool {
 		let word = &self.chunks[index / CHUNK_SLOTS].words[(index % CHUNK_SLOTS) / WORD_BITS];
 		let bit = 1 << (index % WORD_BITS);
 		// A sibling that woke it earlier in this pass already set its bit, which then says
@@ -735,6 +736,7 @@ impl<T: Task> Tasks<T> {
 				self.free.push(index);
 				self.len -= 1;
 				done(occupant.task, output);
+				false
 			}
 			Poll::Pending => {
 				let word = &self.chunks[index / CHUNK_SLOTS].words[(index % CHUNK_SLOTS) / WORD_BITS];
@@ -742,6 +744,7 @@ impl<T: Task> Tasks<T> {
 				if let Some((_, priority)) = &mut self.sim[index].priority {
 					children.ran(priority, yielded);
 				}
+				yielded
 			}
 		}
 	}
