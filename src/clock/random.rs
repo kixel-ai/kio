@@ -71,7 +71,8 @@ mod tests {
 	/// Outside the simulator the seed stays fixed for the process, while draws keep moving.
 	#[test]
 	fn the_host_seed_holds_while_draws_move() {
-		assert_eq!(super::seed(), super::seed());
+		let seed = super::seed();
+		assert_eq!(std::thread::spawn(super::seed).join().unwrap(), seed);
 		let mut rng = super::rng();
 		let [mut a, mut b] = [[0u8; 32]; 2];
 		rng.fill_bytes(&mut a);
