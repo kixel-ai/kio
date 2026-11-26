@@ -70,7 +70,7 @@ use syn::{
 ///   `let`, still stores it and fails as a use after move: rename one of them.
 /// - The body ends in its `Poll::Ready` value. Polling a `Done` machine panics.
 /// - `Name` is `Send` when every stored local is, by Rust's own auto impl. A `!Send`
-///   local reports its type and its wait (`NameStep`), not the local itself.
+///   local's error names its type and its wait (`NameStep`).
 ///
 /// Not supported:
 ///
