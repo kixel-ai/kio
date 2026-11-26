@@ -799,9 +799,12 @@ impl<T: Send + Sync + 'static> Writer<T> {
 			Some(full) => (full.capacity * 2).min(MAX_SEGMENT),
 			None => FIRST_SEGMENT,
 		};
-		if end > u64::MAX - capacity as u64 {
+		// Clamped to the indices left, so every index below `u64::MAX` stays usable.
+		let room = u64::MAX - end;
+		if room == 0 {
 			exhausted();
 		}
+		let capacity = if capacity as u64 > room { room as usize } else { capacity };
 
 		let (segment, Tracked(fresh)) = Segment::new(end, capacity);
 		let tracked Fresh { header, filled, next, slots } = fresh;
@@ -1568,12 +1571,8 @@ impl<T: Send + Sync + 'static> Writer<T> {
 impl<T: Send + Sync + 'static> Drop for Writer<T> {
 	/// Evict every entry, so readers that outlive the writer hold nothing.
 	fn drop(&mut self) {
-		self.shared.base.store(self.end(), Ordering::Release);
-		self.shared.head.unverified().store(ptr::null_mut(), Ordering::Release);
-		if !self.segments.is_empty() {
-			let segments = std::mem::take(&mut self.segments);
-			self.retire(segments);
-		}
+		// Through the verified eviction, so the head moves with the proof's ledger.
+		self.evict(self.end());
 	}
 }
 
@@ -1920,6 +1919,19 @@ mod test {
 		writer.push("x");
 		assert_eq!(get(&mut reader, 99), Err(Evicted));
 		assert_eq!(get(&mut reader, 100), Ok(Some("x")));
+	}
+
+	/// Every index below `u64::MAX` takes an entry; the one past it panics.
+	#[test]
+	#[should_panic(expected = "log index overflow")]
+	fn the_last_index_is_usable() {
+		let mut writer = Writer::new(u64::MAX - 2);
+		let mut reader = writer.reader();
+		writer.push("a");
+		writer.push("b");
+		assert_eq!(writer.end(), u64::MAX);
+		assert_eq!(get(&mut reader, u64::MAX - 1), Ok(Some("b")));
+		writer.push("c");
 	}
 
 	/// A clone reads independently from where the original's segment was.

@@ -218,10 +218,3 @@ impl Usize {
 		&self.0
 	}
 }
-
-impl<T> Ptr<T> {
-	#[inline]
-	pub fn unverified(&self) -> &atomic::AtomicPtr<T> {
-		&self.0
-	}
-}

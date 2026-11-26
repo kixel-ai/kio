@@ -58,12 +58,16 @@
         {
           packages = {
             quest = quest-cli;
-            inherit verus;
-          };
-          devShells.default = pkgs.mkShell { packages = devPackages; };
+          }
+          // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux { inherit verus; };
+          devShells = {
+            default = pkgs.mkShell { packages = devPackages; };
+          }
           # The default shell plus Verus, for `just verify`. Separate so the merge gate's
-          # shell doesn't download Verus's toolchain.
-          devShells.verus = pkgs.mkShell { packages = devPackages ++ [ verus ]; };
+          # shell doesn't download Verus's toolchain; Linux only, as Verus's release is.
+          // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+            verus = pkgs.mkShell { packages = devPackages ++ [ verus ]; };
+          };
           formatter = pkgs.nixfmt;
           checks.quest-tree = pkgs.runCommand "quest-tree" { nativeBuildInputs = [ quest-cli ]; } ''
             quest --root ${self} check
