@@ -4,8 +4,9 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 default:
     @just --list
 
-# Lint the workspace, feature matrix, workflows, TOML, Nix, and quest tree.
+# Lint the workspace, feature matrix, unused dependencies, workflows, TOML, Nix, and quest tree.
 check:
+    cargo shear
     cargo clippy --locked --workspace --all-targets -- -D warnings
     cargo clippy --locked -p kio --no-default-features -- -D warnings
     cargo clippy --locked -p kio --all-features --all-targets -- -D warnings
