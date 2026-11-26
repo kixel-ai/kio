@@ -68,9 +68,9 @@ thread_local! {
 	static SCHEDULING: Cell<bool> = const { Cell::new(false) };
 	/// The first child a probe saw make progress, with where it was pushed.
 	static BLAMED: Cell<Option<(&'static Location<'static>, usize)>> = const { Cell::new(None) };
-	/// The task being polled, and whether its own waker fired on this thread since, so a
-	/// worker thread's wake is no yield to demote.
-	static POLLED: Cell<(usize, bool)> = const { Cell::new((usize::MAX, false)) };
+	/// The waker of the task being polled, by address, and whether it fired on this thread
+	/// since, so neither a worker thread's wake nor an earlier run's task is a yield to demote.
+	static POLLED: Cell<(usize, bool)> = const { Cell::new((0, false)) };
 	/// Set when [`yield_now`] parks the task being polled, which then runs behind every
 	/// task already ready. Any other wake it makes of itself keeps its place in wake order.
 	static YIELDED: Cell<bool> = const { Cell::new(false) };
@@ -375,8 +375,9 @@ impl Wake for TaskWaker {
 		event();
 		// Another thread's copy never names a task of this run's thread.
 		let _ = POLLED.try_with(|polled| {
-			if polled.get().0 == self.id {
-				polled.set((self.id, true));
+			let me = Arc::as_ptr(self) as usize;
+			if polled.get().0 == me {
+				polled.set((me, true));
 			}
 		});
 		if !self.queued.swap(true, Ordering::AcqRel) {
@@ -568,22 +569,19 @@ fn run_inner(runtime: &Runtime, future: Pin<&mut dyn Future<Output = ()>>, locat
 		if let Some(id) = picked {
 			runtime.running.set(id);
 			YIELDED.set(false);
-			POLLED.set((id, false));
+			let queue = match id {
+				ROOT => Arc::as_ptr(&root.queue),
+				id => Arc::as_ptr(&spawned[&id].queue),
+			};
+			POLLED.set((queue as usize, false));
 			let (done, woke) = root.poll(&mut spawned, id);
-			let (_, woke_itself) = POLLED.replace((usize::MAX, false));
+			let (_, woke_itself) = POLLED.replace((0, false));
 			let yields = woke && YIELDED.take();
 			if done && id == ROOT {
 				break;
 			}
-			// Only `pct` ranks tasks, and only it counts their steps, finishing ones included.
 			if done {
-				if let Some(task) = spawned.remove(&id) {
-					task.queue.retired.store(true, Ordering::Release);
-				}
-				yielded.remove(&id);
-				if let Some(mut priority) = runtime.priorities.borrow_mut().remove(&id) {
-					runtime.schedule.borrow_mut().ran(&mut priority, false);
-				}
+				retire(runtime, &mut spawned, &mut yielded, id);
 				continue;
 			}
 			if yields {
@@ -609,7 +607,13 @@ fn run_inner(runtime: &Runtime, future: Pin<&mut dyn Future<Output = ()>>, locat
 			continue;
 		}
 		if runtime.probe {
-			probe(runtime, &mut root, &mut spawned);
+			if let Some(id) = probe(runtime, &mut root, &mut spawned) {
+				if id == ROOT {
+					break;
+				}
+				retire(runtime, &mut spawned, &mut yielded, id);
+				continue;
+			}
 			// A probed task may have attached a queue, which wakes nothing.
 			queued = runtime.advance_queues();
 			// The probe stops at a wake from another thread, which the scheduler runs.
@@ -634,11 +638,25 @@ fn run_inner(runtime: &Runtime, future: Pin<&mut dyn Future<Output = ()>>, locat
 	drop(runtime.spawned.take());
 }
 
+/// Drop a spawned task that finished, so its waker names nothing.
+fn retire(runtime: &Runtime, spawned: &mut BTreeMap<usize, Spawned>, yielded: &mut BTreeSet<usize>, id: usize) {
+	if let Some(task) = spawned.remove(&id) {
+		task.queue.retired.store(true, Ordering::Release);
+	}
+	yielded.remove(&id);
+	// Only `pct` ranks tasks, and it counts a finishing step too.
+	if let Some(mut priority) = runtime.priorities.borrow_mut().remove(&id) {
+		runtime.schedule.borrow_mut().ran(&mut priority, false);
+	}
+}
+
 /// Poll every parked task once more, panicking at the first that makes progress: nothing
 /// woke it, so without the probe it would sleep through the change it missed.
 ///
 /// A task set polls every child while probing, and blames the first that progresses.
-fn probe(runtime: &Runtime, root: &mut Root<'_>, spawned: &mut BTreeMap<usize, Spawned>) {
+/// Stops at a wake from another thread, which the scheduler handles, returning a task
+/// that such a wake let finish in its probe poll.
+fn probe(runtime: &Runtime, root: &mut Root<'_>, spawned: &mut BTreeMap<usize, Spawned>) -> Option<usize> {
 	struct Probing;
 	impl Drop for Probing {
 		fn drop(&mut self) {
@@ -653,13 +671,18 @@ fn probe(runtime: &Runtime, root: &mut Root<'_>, spawned: &mut BTreeMap<usize, S
 	for id in ids {
 		// A wake from another thread queued a task: the scheduler runs it, not the probe.
 		if !runtime.ready.is_empty() {
-			return;
+			return None;
 		}
 		let before = events();
 		BLAMED.set(None);
 		runtime.running.set(id);
-		let (done, _) = root.poll(spawned, id);
-		if !done && events() == before && BLAMED.get().is_none() {
+		let (done, woke) = root.poll(spawned, id);
+		let quiet = events() == before && BLAMED.get().is_none();
+		// Woken with no event on this thread: another thread woke it during the poll.
+		if quiet && woke {
+			return done.then_some(id);
+		}
+		if !done && quiet {
 			continue;
 		}
 		let task = match id {
@@ -672,6 +695,7 @@ fn probe(runtime: &Runtime, root: &mut Root<'_>, spawned: &mut BTreeMap<usize, S
 			.unwrap_or_default();
 		panic!("lost wakeup: {task}{child} made progress when polled again at a stall, though nothing woke it");
 	}
+	None
 }
 
 /// How a [`Tasks`](crate::Tasks) pass runs its children inside a run that schedules
@@ -1881,6 +1905,44 @@ mod tests {
 			})
 			.await
 			.unwrap();
+		});
+	}
+
+	/// A task another thread wakes during its own probe poll, and that then finishes,
+	/// finishes as the scheduler would have run it.
+	#[test]
+	fn the_probe_finishes_a_task_another_thread_woke_during_its_poll() {
+		run_with(0, probing(), async {
+			crate::wait(|waiter| {
+				if !super::probing() {
+					return Poll::Pending;
+				}
+				let waker = waiter.waker().clone();
+				std::thread::spawn(move || waker.wake()).join().unwrap();
+				Poll::Ready(())
+			})
+			.await;
+		});
+	}
+
+	/// Under `pct`, a wake of an earlier run's task with the same id is no yield.
+	#[test]
+	fn an_earlier_runs_wake_is_not_a_yield() {
+		let old = run_with(0, pct(), std::future::poll_fn(|cx| Poll::Ready(cx.waker().clone())));
+		run_with(0, pct(), async {
+			let mut sleep = Box::pin(crate::clock::sleep(Duration::from_secs(1)));
+			let mut polls = 0;
+			crate::wait(|waiter| {
+				polls += 1;
+				if polls == 1 {
+					old.wake_by_ref();
+				} else {
+					let priority = expect_current().priorities.borrow()[&ROOT];
+					assert!(priority >= 1, "demoted to {priority}");
+				}
+				waiter.poll_future(sleep.as_mut())
+			})
+			.await;
 		});
 	}
 
