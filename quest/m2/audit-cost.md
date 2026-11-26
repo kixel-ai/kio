@@ -35,6 +35,6 @@ Check first:
 Measured and left alone:
 
 - Criterion's dependency tree is 36 of the workspace's 91 packages and about 39% of cold build unit time. A warm PR run pays nothing for it, because the `main` cache holds it. Moving the benches into an unpublished crate would help only cold builds. Revisit if cold builds become common, such as cacheless post-merge Windows or macOS lanes.
-- A `restore-keys` fallback for the cargo cache: a toolchain bump invalidates the whole target directory, and only lockfile-changing PRs would gain.
+- A `restore-keys` fallback for the cargo cache: a toolchain bump invalidates the whole target directory, so only key changes that leave artifacts reusable (`Cargo.lock` or `Cargo.toml` edits) would gain.
 - Skipping cargo on quest-only PRs: the dev shell is needed for `quest check` anyway, and warm cargo is about 14 s.
 - Measurements on the agent host: its load average was over 5,000, so its wall times only rank work. They are not a baseline.

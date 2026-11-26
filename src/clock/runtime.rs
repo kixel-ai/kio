@@ -630,7 +630,9 @@ mod tests {
 		let stderr = String::from_utf8_lossy(&output.stderr);
 		assert!(stdout.contains("running 1 test"), "no test named {test}: {stdout}");
 		let exited = stderr.contains("timer fired on the host clock");
-		assert_eq!(output.status.success(), !exited, "{stdout}{stderr}");
+		// 101, not a signal: an abort would hand the host's crash reporter a core dump.
+		let code = if exited { 101 } else { 0 };
+		assert_eq!(output.status.code(), Some(code), "{stdout}{stderr}");
 		assert_eq!(exited, exits, "{stdout}{stderr}");
 	}
 
