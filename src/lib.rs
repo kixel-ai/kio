@@ -35,6 +35,9 @@
 //! fn` that awaits a `poll_*` method.
 
 #![warn(missing_docs)]
+// Verus's attribute syntax puts macro attributes on statements in `log`'s proof. Only
+// Verus, which allows unstable features, sets the cfg.
+#![cfg_attr(verus_keep_ghost, feature(proc_macro_hygiene))]
 
 use std::{
 	fmt,
