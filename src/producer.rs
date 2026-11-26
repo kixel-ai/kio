@@ -68,12 +68,9 @@ impl<T> Producer<T> {
 	/// this never takes the count from zero, so once it reads zero it stays there until a
 	/// `consume`: a holder that saw the channel unwanted never finds it wanted again.
 	pub fn join(&self) -> Option<Consumer<T>> {
-		self.counts
-			.consumers
-			.fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
-				(count > 0).then(|| count + 1)
-			})
-			.ok()?;
+		if !self.counts.join_consumers() {
+			return None;
+		}
 		Some(Consumer {
 			state: self.state.clone(),
 			counts: self.counts.clone(),
