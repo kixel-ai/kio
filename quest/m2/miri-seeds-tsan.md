@@ -9,6 +9,8 @@ fails the run, with no change to the code under test.
 
 ## Plan
 
+Decided 2026-11-26 (maintainer, /quest-run): ✅ keep (rejected: drop).
+
 kio's half of `moq-dev/moq`'s
 [`quest/m4/miri-seeds-tsan.md`](https://github.com/moq-dev/moq/blob/main/quest/m4/miri-seeds-tsan.md),
 which the maintainer decided 2026-11-10 for kio and moq-net together. kio's
