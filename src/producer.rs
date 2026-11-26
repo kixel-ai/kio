@@ -306,6 +306,18 @@ pub enum Unwanted<'a, T> {
 mod test {
 	use super::*;
 
+	/// A closed channel refuses writes and closes once, handing back its final value.
+	#[test]
+	fn a_closed_channel_refuses_writes() {
+		let producer = Producer::new(7u32);
+		producer.close().ok().expect("open");
+		match producer.write() {
+			Ok(_) => panic!("a closed channel took a write"),
+			Err(value) => assert_eq!(*value, 7),
+		}
+		assert!(producer.close().is_err(), "a channel closed twice");
+	}
+
 	/// `join` adds to the readers present and never revives a channel they all left.
 	#[test]
 	fn join_only_while_wanted() {
