@@ -33,8 +33,9 @@ On `Producer` and `ProducerWeak`:
 - `used()`, `unused()`, `poll_used(waiter)`, and `poll_unused(waiter)` are replaced by
   `poll_wanted_changed(waiter, last)`, which resolves to the new `wanted()` once it
   differs from `last`, or `Err(Closed)`. `Producer::wanted_changed(last)` awaits it
-  with the `async` feature. Wait for a consumer with `last = false`, and for the last
-  one to go with `last = true`.
+  with the `async` feature; `ProducerWeak` has no async form, so await
+  `kio::wait(|waiter| weak.poll_wanted_changed(waiter, last))`. Wait for a consumer
+  with `last = false`, and for the last one to go with `last = true`.
 
 ### `MaybeSend` removed ([moq-dev/moq#7475](https://github.com/moq-dev/moq/pull/7475))
 
@@ -45,6 +46,7 @@ kio no longer builds for WASM, so the `MaybeSend` alias is gone. Bound on `Send`
 `Fan` with its `Hold<T>`, `WeakLock`, `Pollable`, and the public `Lock::downgrade` are
 gone.
 `Task` gained an `Output` type and has a blanket impl for `FnMut(&Waiter) -> Poll<R>`.
+A `Pollable` impl becomes a `Task` impl whose `poll` takes `&mut self` instead of `&self`.
 `poll_used` and `poll_unused` return `Poll<Result<(), Closed>>` instead of
 `Poll<Option<()>>`, before their rename above.
 `Waiter::context()` replaces `Context::from_waker(waiter.waker())`.

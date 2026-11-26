@@ -13,10 +13,10 @@
 //! one-entry log holds one slot. Eviction advances the base, retires each segment
 //! wholly below it, and hands the evicted entries of a segment it leaves live to the
 //! collector, which drops them in place. A reader holds nothing between reads: it reads
-//! through a [`Read`], which pins the log only while it lives. A retired segment, or an
-//! evicted entry of a live one, is freed once every pin taken before its eviction is
-//! gone (epoch-based reclamation), so eviction frees memory whatever readers do, and a
-//! reader that stopped reading finds its entries [`Evicted`] when it comes back.
+//! through a [`Read`], which pins the log only while it lives. A retired segment is
+//! freed, and an evicted entry of a live one dropped, once every pin taken before its
+//! eviction is gone (epoch-based reclamation), so eviction frees memory whatever readers
+//! do, and a reader that stopped reading finds its entries [`Evicted`] when it comes back.
 
 use std::{
 	alloc::{self, Layout},

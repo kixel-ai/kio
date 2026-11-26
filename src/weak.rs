@@ -11,7 +11,7 @@ use crate::{
 	waiter::*,
 };
 
-/// A handle that keeps neither the channel open nor its state allocated
+/// A handle that keeps neither the channel open nor its state alive
 /// ([`Producer::downgrade`](crate::Producer::downgrade)).
 ///
 /// Unlike [`ProducerWeak`], which keeps the state allocated so it stays readable after
