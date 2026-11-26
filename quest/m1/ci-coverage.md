@@ -8,7 +8,7 @@
 - A post-merge workflow on `main` runs `kio`'s tests on Windows and macOS (the platform-specific clock backends), both Miri passes, and each Criterion bench once.
 - A failed post-merge run files work without anyone watching the Actions tab.
 
-Out of scope: performance tracking (Criterion history, CodSpeed) and Miri's GenMC mode, which [its own quest](/quest/m2/miri-genmc.md) owns.
+Out of scope: performance tracking (Criterion history, CodSpeed), Miri's GenMC mode, which [its own quest](/quest/m2/miri-genmc.md) owns, and the many-seeds and ThreadSanitizer passes, which [theirs](/quest/m2/miri-seeds-tsan.md) owns.
 
 ## Plan
 

@@ -1,5 +1,6 @@
 //! The `#[kio::machine]` attribute, a `poll_*` state machine from straight-line code,
-//! and the `#[kio::test]` attribute, an `async fn` test run on the simulator.
+//! `#[kio::wrapper]`, the `async fn` that awaits a `poll_*` method, and the
+//! `#[kio::test]` attribute, an `async fn` test run on the simulator.
 //!
 //! Use them through `kio`'s `macros` and `sim` features, which re-export them.
 
