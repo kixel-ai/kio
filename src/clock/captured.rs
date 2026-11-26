@@ -269,4 +269,17 @@ mod tests {
 			assert_eq!(clock, Clock::current());
 		});
 	}
+
+	/// A queue entered on a runtime with no installed clock, as an io_uring worker
+	/// enters one, is advanced from the host's clock, so that is its capture.
+	#[test]
+	fn an_entered_queue_on_a_runtime_captures_the_host() {
+		let host = Clock::current();
+		let runtime = paused();
+		let _runtime = runtime.enter();
+		assert_ne!(Clock::current(), host, "a paused runtime is a clock of its own");
+		let deadlines = crate::clock::Deadlines::new(crate::clock::now());
+		let _entered = deadlines.enter();
+		assert_eq!(Clock::current(), host);
+	}
 }
