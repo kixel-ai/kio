@@ -125,6 +125,12 @@ struct Occupant<T> {
 	task: T,
 	park: Park,
 	generation: u64,
+	/// Its rank when the simulator schedules children.
+	#[cfg(feature = "sim")]
+	priority: crate::clock::sim::Priority,
+	/// Where it was pushed, to blame it for a lost wakeup.
+	#[cfg(feature = "sim")]
+	location: &'static std::panic::Location<'static>,
 }
 
 /// Waker state shared with every slot; deliberately `T`-free so the wakers
@@ -283,6 +289,8 @@ impl Wake for SlotWaker {
 	}
 
 	fn wake_by_ref(self: &Arc<Self>) {
+		#[cfg(feature = "sim")]
+		crate::clock::sim::event();
 		// An already-set bit means the slot is queued for the next pass and the
 		// owner was already nudged: a burst of wakes is one bit and one nudge.
 		let index = (self.slot % CHUNK_SLOTS) / WORD_BITS;
@@ -342,12 +350,14 @@ impl<T> Tasks<T> {
 	///
 	/// Wakes the owner, so a task pushed between polls (from another arm of the
 	/// owner's own poll, say) still gets started.
+	#[cfg_attr(feature = "sim", track_caller)]
 	pub fn push(&mut self, task: T) {
 		self.insert(task);
 	}
 
 	/// Add a task like [`push`](Self::push), returning the key that
 	/// [`remove`](Self::remove)s it before it finishes.
+	#[cfg_attr(feature = "sim", track_caller)]
 	pub fn insert(&mut self, task: T) -> TaskKey {
 		let index = match self.free.pop() {
 			Some(index) => index,
@@ -370,6 +380,10 @@ impl<T> Tasks<T> {
 			task,
 			park: Park::default(),
 			generation: self.generation,
+			#[cfg(feature = "sim")]
+			priority: crate::clock::sim::child_priority(),
+			#[cfg(feature = "sim")]
+			location: std::panic::Location::caller(),
 		});
 		self.len += 1;
 		// Queue the first poll exactly the way any wake would.
@@ -549,6 +563,13 @@ impl<T: Task> Tasks<T> {
 			scratch.sort_unstable_by_key(|&(word, _)| word);
 		}
 
+		#[cfg(feature = "sim")]
+		if let Some(children) = crate::clock::sim::children() {
+			self.pass_scheduled(&children, &scratch, done);
+			self.scratch = scratch;
+			return;
+		}
+
 		let slots = self.children.len();
 		let mut advanced = false;
 		// Visit `next..slots`, then wrap through `0..next`. The snapshot stays
@@ -601,6 +622,76 @@ impl<T: Task> Tasks<T> {
 			}
 		}
 		self.scratch = scratch;
+	}
+
+	/// [`pass`](Self::pass) as the simulator schedules it: the children woken in
+	/// `scratch`, or every child while it probes for lost wakeups, in the order it
+	/// picks. Those it leaves are woken again for the owner's next poll, so another task
+	/// may run in between.
+	#[cfg(feature = "sim")]
+	fn pass_scheduled(
+		&mut self,
+		children: &crate::clock::sim::Children,
+		scratch: &[(usize, u64)],
+		done: &mut impl FnMut(T, T::Output),
+	) {
+		let mut woken: Vec<usize> = match children.probing() {
+			true => (0..self.children.len()).collect(),
+			false => scratch
+				.iter()
+				.flat_map(|&(word, bits)| {
+					(0..WORD_BITS)
+						.filter(move |bit| bits & (1 << bit) != 0)
+						.map(move |bit| word * WORD_BITS + bit)
+				})
+				.collect(),
+		};
+		// A stale bit names a slot whose occupant already finished.
+		woken.retain(|&index| matches!(self.children.get(index), Some(Some(_))));
+
+		let mut priorities = Vec::with_capacity(woken.len());
+		let mut ran = false;
+		while !woken.is_empty() {
+			priorities.clear();
+			priorities.extend(
+				woken
+					.iter()
+					.map(|&index| self.children[index].as_ref().expect("woken slot is occupied").priority),
+			);
+			let Some(pick) = children.pick(&priorities, ran) else {
+				for index in woken {
+					self.wakers[index].wake_by_ref();
+				}
+				return;
+			};
+			let index = woken.remove(pick);
+			ran = true;
+
+			let events = children.events();
+			let occupant = self.children[index].as_mut().expect("woken slot is occupied");
+			let cx = Context::from_waker(&self.wakers[index]);
+			let child_waiter = occupant.park.hold(&cx);
+			let poll = {
+				let _scope = crate::coop::child();
+				occupant.task.poll(child_waiter)
+			};
+			if children.probing() && (poll.is_ready() || children.events() != events) {
+				children.blame(occupant.location, index);
+			}
+			match poll {
+				Poll::Ready(output) => {
+					let occupant = self.children[index].take().expect("polled slot is occupied");
+					self.free.push(index);
+					self.len -= 1;
+					done(occupant.task, output);
+				}
+				Poll::Pending => {
+					let word = &self.chunks[index / CHUNK_SLOTS].words[(index % CHUNK_SLOTS) / WORD_BITS];
+					let yielded = word.load(Ordering::Acquire) & (1 << (index % WORD_BITS)) != 0;
+					children.ran(&mut occupant.priority, yielded);
+				}
+			}
+		}
 	}
 }
 

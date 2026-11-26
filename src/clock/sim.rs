@@ -21,28 +21,61 @@
 //! Each run seeds [`rng`](crate::clock::rng) and [`seed`](crate::clock::seed) from `MOQ_SIM_SEED`,
 //! or at random when it is unset, and a run that panics prints its seed, so setting
 //! `MOQ_SIM_SEED` to it replays the run bit-exact.
+//!
+//! Experimental: `KIO_SIM_SCHEDULE` picks the order ready tasks and woken
+//! [`Tasks`](crate::Tasks) children run in (wake order by default, or `random` or `pct`, drawn
+//! from the seed), and `KIO_SIM_PROBE=1` hunts lost wakeups: whenever every task has
+//! stalled, each is polled once more before time moves, and one that makes progress
+//! (completes, wakes or spawns a task, arms a timer, or publishes to a channel) panics
+//! with where it was spawned, since nothing woke it.
 
 use std::{
 	cell::{Cell, RefCell},
-	collections::BTreeMap,
+	collections::{BTreeMap, BTreeSet, VecDeque},
 	future::{Future, IntoFuture},
+	panic::Location,
 	pin::{Pin, pin},
 	rc::Rc,
 	sync::{
-		Arc,
+		Arc, Mutex,
 		atomic::{AtomicBool, AtomicU64, Ordering},
 	},
 	task::{Context, Poll, Wake, Waker},
 	time::Duration,
 };
 
-use futures::{FutureExt, StreamExt, stream::FuturesUnordered};
+use futures::FutureExt;
 use rand::SeedableRng;
+
+mod schedule;
+
+#[cfg(test)]
+mod credit;
+
+pub(crate) use schedule::Priority;
+use schedule::{Config, Scheduler};
 
 use crate::clock::{Deadlines, Instant, Manual, Wall, deadline::WeakDeadlines};
 
 thread_local! {
 	static CURRENT: RefCell<Option<Rc<Runtime>>> = const { RefCell::new(None) };
+	/// Counts what makes progress visible to the run: wakes, spawns, armed timers, and
+	/// channel publishes. A probe compares it across a re-poll.
+	static EVENTS: Cell<u64> = const { Cell::new(0) };
+	/// Set while a probe re-polls parked tasks, so a task set polls every child.
+	static PROBING: Cell<bool> = const { Cell::new(false) };
+	/// The first child a probe saw make progress, with where it was pushed.
+	static BLAMED: Cell<Option<(&'static Location<'static>, usize)>> = const { Cell::new(None) };
+}
+
+/// Count an event a probe watches for.
+pub(crate) fn event() {
+	// A wake from a thread-local's destructor counts nothing.
+	let _ = EVENTS.try_with(|events| events.set(events.get().wrapping_add(1)));
+}
+
+fn events() -> u64 {
+	EVENTS.get()
 }
 
 type Task = Pin<Box<dyn Future<Output = ()>>>;
@@ -55,8 +88,18 @@ fn poll<F: Future + ?Sized>(future: Pin<&mut F>, cx: &mut Context<'_>) -> Poll<F
 struct Runtime {
 	/// Tells this run from earlier ones on the thread, so a timer finds its own.
 	id: u64,
-	/// Spawned since the run loop last collected them.
-	spawned: RefCell<Vec<Task>>,
+	/// Spawned since the run loop last collected them, with where.
+	spawned: RefCell<Vec<(usize, Spawned)>>,
+	/// The id the next spawned task takes.
+	next: Cell<usize>,
+	/// The tasks woken since they last ran, in wake order.
+	ready: Arc<Ready>,
+	schedule: RefCell<Scheduler>,
+	/// Each live task's priority, for a task set weighing its children against them.
+	priorities: RefCell<BTreeMap<usize, Priority>>,
+	/// The task polling right now.
+	running: Cell<usize>,
+	probe: bool,
 	time: RefCell<Time>,
 	/// Queues kept in step with simulated time, until their owners drop them.
 	queues: RefCell<Vec<WeakDeadlines>>,
@@ -75,11 +118,17 @@ struct Time {
 }
 
 impl Runtime {
-	fn enter(seed: u64) -> Rc<Self> {
+	fn enter(seed: u64, config: Config) -> Rc<Self> {
 		static RUNS: AtomicU64 = AtomicU64::new(0);
 		let runtime = Rc::new(Runtime {
 			id: RUNS.fetch_add(1, Ordering::Relaxed),
 			spawned: RefCell::new(Vec::new()),
+			next: Cell::new(ROOT + 1),
+			ready: Arc::default(),
+			schedule: RefCell::new(Scheduler::new(config.policy, seed)),
+			priorities: RefCell::default(),
+			running: Cell::new(ROOT),
+			probe: config.probe,
 			time: RefCell::new(Time {
 				clock: Manual::new(),
 				anchor: None,
@@ -265,28 +314,63 @@ pub fn is_running() -> bool {
 	CURRENT.with(|current| current.borrow().is_some())
 }
 
-/// Raises a flag the run loop checks, for the root future and the spawned tasks.
-struct Flag(AtomicBool);
+/// The root future's id; spawned tasks count up from it.
+const ROOT: usize = 0;
 
-impl Wake for Flag {
-	fn wake(self: Arc<Self>) {
-		self.0.store(true, Ordering::SeqCst);
+/// The tasks woken since they last ran, each once, in wake order.
+#[derive(Default)]
+struct Ready(Mutex<VecDeque<usize>>);
+
+impl Ready {
+	fn is_empty(&self) -> bool {
+		self.0.lock().unwrap().is_empty()
 	}
 }
 
-/// Clears the thread's runtime when [`run`] returns or unwinds, printing the seed
-/// that replays an unwinding run when [`run`] seeded it.
+/// Queues its task on the run's ready list.
+struct TaskWaker {
+	id: usize,
+	/// Set while the task is on the list, so a burst of wakes queues it once.
+	queued: AtomicBool,
+	ready: Arc<Ready>,
+}
+
+impl TaskWaker {
+	fn new(id: usize, ready: &Arc<Ready>) -> Arc<Self> {
+		Arc::new(Self {
+			id,
+			queued: AtomicBool::new(false),
+			ready: ready.clone(),
+		})
+	}
+}
+
+impl Wake for TaskWaker {
+	fn wake(self: Arc<Self>) {
+		self.wake_by_ref();
+	}
+
+	fn wake_by_ref(self: &Arc<Self>) {
+		event();
+		if !self.queued.swap(true, Ordering::AcqRel) {
+			self.ready.0.lock().unwrap().push_back(self.id);
+		}
+	}
+}
+
+/// Clears the thread's runtime when [`run`] returns or unwinds, printing the settings
+/// that replay an unwinding run when [`run`] seeded it.
 struct Enter {
-	replay: Option<u64>,
+	replay: Option<String>,
 }
 
 impl Drop for Enter {
 	fn drop(&mut self) {
 		CURRENT.with(|current| current.borrow_mut().take());
-		if let Some(seed) = self.replay
+		if let Some(replay) = &self.replay
 			&& std::thread::panicking()
 		{
-			eprintln!("kio::clock::sim run panicked; replay it with MOQ_SIM_SEED={seed}");
+			eprintln!("kio::clock::sim run panicked; replay it with {replay}");
 		}
 	}
 }
@@ -299,11 +383,13 @@ impl Drop for Enter {
 ///
 /// When called inside another `run`, and when every task is parked with no timer
 /// armed and none awaits [`idle`], which is a deadlock. Also when one root poll
-/// exceeds the ready kio poll limit, a detached task panics, or `MOQ_SIM_SEED` is
-/// not a `u64`.
+/// exceeds the ready kio poll limit, a detached task panics, `MOQ_SIM_SEED` is
+/// not a `u64`, or `KIO_SIM_SCHEDULE` or `KIO_SIM_PROBE` is malformed, and on a lost
+/// wakeup while probing.
+#[track_caller]
 pub fn run<F: IntoFuture>(future: F) -> F::Output {
 	let seed = seed_from_env();
-	enter(seed, Some(seed), future)
+	enter(seed, Some(seed), Config::from_env(), future)
 }
 
 /// [`run`] with [`rng`](crate::clock::rng) and [`seed`](crate::clock::seed) drawn from
@@ -313,12 +399,23 @@ pub fn run<F: IntoFuture>(future: F) -> F::Output {
 /// # Panics
 ///
 /// As [`run`] does, except on `MOQ_SIM_SEED`.
+#[track_caller]
 pub fn run_seeded<F: IntoFuture>(seed: u64, future: F) -> F::Output {
-	enter(seed, None, future)
+	enter(seed, None, Config::from_env(), future)
 }
 
-fn enter<F: IntoFuture>(seed: u64, replay: Option<u64>, future: F) -> F::Output {
-	let runtime = Runtime::enter(seed);
+/// [`run_seeded`] scheduled by `config` rather than the environment.
+#[cfg(test)]
+#[track_caller]
+fn run_with<F: IntoFuture>(seed: u64, config: Config, future: F) -> F::Output {
+	enter(seed, None, config, future)
+}
+
+#[track_caller]
+fn enter<F: IntoFuture>(seed: u64, replay: Option<u64>, config: Config, future: F) -> F::Output {
+	let location = Location::caller();
+	let replay = replay.map(|seed| format!("MOQ_SIM_SEED={seed}{config}"));
+	let runtime = Runtime::enter(seed, config);
 	let enter = Enter { replay };
 
 	let mut future = pin!(future.into_future());
@@ -328,36 +425,122 @@ fn enter<F: IntoFuture>(seed: u64, replay: Option<u64>, future: F) -> F::Output 
 		let future = pin!(std::future::poll_fn(|cx| {
 			future.as_mut().poll(cx).map(|value| output = Some(value))
 		}));
-		run_inner(&runtime, future);
+		run_inner(&runtime, future, location);
 	}
 	runtime.exit(enter);
 	output.expect("root future completed")
 }
 
-fn run_inner(runtime: &Runtime, mut future: Pin<&mut dyn Future<Output = ()>>) {
-	let root = Arc::new(Flag(AtomicBool::new(true)));
-	let root_waker = Waker::from(root.clone());
-	let mut root_cx = Context::from_waker(&root_waker);
+/// A spawned task the run loop owns.
+struct Spawned {
+	task: Task,
+	queue: Arc<TaskWaker>,
+	waker: Waker,
+	location: &'static Location<'static>,
+}
 
-	let mut tasks = FuturesUnordered::new();
-	let pool = Arc::new(Flag(AtomicBool::new(false)));
-	let pool_waker = Waker::from(pool.clone());
-	let mut pool_cx = Context::from_waker(&pool_waker);
+/// The root future, which borrows the caller's stack, kept apart from the spawned tasks.
+struct Root<'a> {
+	future: Pin<&'a mut dyn Future<Output = ()>>,
+	queue: Arc<TaskWaker>,
+	waker: Waker,
+	location: &'static Location<'static>,
+}
 
-	// The root and the spawned tasks take turns, so a task that keeps waking
-	// itself cannot starve the root: `FuturesUnordered` yields after one pass.
-	loop {
-		if root.0.swap(false, Ordering::SeqCst) && poll(future.as_mut(), &mut root_cx).is_ready() {
-			break;
+impl Root<'_> {
+	/// Poll task `id`, returning whether it finished and whether it woke itself.
+	fn poll(&mut self, spawned: &mut BTreeMap<usize, Spawned>, id: usize) -> (bool, bool) {
+		if id == ROOT {
+			self.queue.queued.store(false, Ordering::Release);
+			let done = poll(self.future.as_mut(), &mut Context::from_waker(&self.waker)).is_ready();
+			return (done, self.queue.queued.load(Ordering::Acquire));
 		}
-		tasks.extend(runtime.spawned.take());
-		pool.0.store(false, Ordering::SeqCst);
-		while let Poll::Ready(Some(())) = tasks.poll_next_unpin(&mut pool_cx) {}
+		let task = spawned.get_mut(&id).expect("a live task");
+		task.queue.queued.store(false, Ordering::Release);
+		// The spawned task's own wrapper opens its poll accounting scope.
+		let done = task
+			.task
+			.as_mut()
+			.poll(&mut Context::from_waker(&task.waker))
+			.is_ready();
+		(done, task.queue.queued.load(Ordering::Acquire))
+	}
+}
+
+fn run_inner(runtime: &Runtime, future: Pin<&mut dyn Future<Output = ()>>, location: &'static Location<'static>) {
+	let queue = TaskWaker::new(ROOT, &runtime.ready);
+	let mut root = Root {
+		future,
+		waker: Waker::from(queue.clone()),
+		queue,
+		location,
+	};
+	let mut spawned = BTreeMap::new();
+	// Tasks that woke themselves while they ran.
+	let mut yielded = BTreeSet::new();
+	let mut weights = Vec::new();
+	let priority = runtime.schedule.borrow_mut().priority();
+	runtime.priorities.borrow_mut().insert(ROOT, priority);
+	root.waker.wake_by_ref();
+
+	loop {
+		// Already queued: a spawn wakes its task where it happens in the spawner's poll.
+		spawned.extend(runtime.spawned.take());
+
+		let picked = {
+			let mut ready = runtime.ready.0.lock().unwrap();
+			// A finished task's waker may still fire; it names nothing to run.
+			ready.retain(|id| *id == ROOT || spawned.contains_key(id));
+			// A task that yielded waits for every task queued ahead of it, as `yield_now`
+			// promises, whatever the schedule.
+			let eligible = match ready.iter().position(|id| yielded.contains(id)) {
+				Some(0) => {
+					yielded.remove(&ready[0]);
+					1
+				}
+				Some(at) => at,
+				None => ready.len(),
+			};
+			let priorities = runtime.priorities.borrow();
+			weights.clear();
+			weights.extend(ready.iter().take(eligible).map(|id| priorities[id]));
+			match weights.is_empty() {
+				true => None,
+				false => {
+					let index = runtime.schedule.borrow_mut().pick(&weights);
+					ready.remove(index)
+				}
+			}
+		};
+		if let Some(id) = picked {
+			runtime.running.set(id);
+			let (done, woke) = root.poll(&mut spawned, id);
+			if done && id == ROOT {
+				break;
+			}
+			if done {
+				spawned.remove(&id);
+				yielded.remove(&id);
+				runtime.priorities.borrow_mut().remove(&id);
+			} else {
+				if woke {
+					yielded.insert(id);
+				}
+				let mut priorities = runtime.priorities.borrow_mut();
+				let priority = priorities.get_mut(&id).expect("a live task");
+				runtime.schedule.borrow_mut().ran(priority, woke);
+			}
+			continue;
+		}
+
 		// Bring queues to the current instant before deciding to stall: one attached
 		// behind the clock may wake a task without time moving.
 		let queued = runtime.advance_queues();
-		if root.0.load(Ordering::SeqCst) || pool.0.load(Ordering::SeqCst) || !runtime.spawned.borrow().is_empty() {
+		if !runtime.ready.is_empty() || !runtime.spawned.borrow().is_empty() {
 			continue;
+		}
+		if runtime.probe {
+			probe(runtime, &mut root, &mut spawned);
 		}
 		if runtime.advance(queued) {
 			continue;
@@ -370,8 +553,114 @@ fn run_inner(runtime: &Runtime, mut future: Pin<&mut dyn Future<Output = ()>>) {
 		}
 	}
 
-	drop(tasks);
+	drop(spawned);
 	drop(runtime.spawned.take());
+}
+
+/// Poll every parked task once more, panicking at the first that makes progress: nothing
+/// woke it, so without the probe it would sleep through the change it missed.
+///
+/// A task set polls every child while probing, and blames the first that progresses.
+fn probe(runtime: &Runtime, root: &mut Root<'_>, spawned: &mut BTreeMap<usize, Spawned>) {
+	struct Probing;
+	impl Drop for Probing {
+		fn drop(&mut self) {
+			PROBING.set(false);
+			BLAMED.set(None);
+		}
+	}
+	PROBING.set(true);
+	let _probing = Probing;
+
+	let ids: Vec<usize> = std::iter::once(ROOT).chain(spawned.keys().copied()).collect();
+	for id in ids {
+		let before = events();
+		BLAMED.set(None);
+		runtime.running.set(id);
+		let (done, _) = root.poll(spawned, id);
+		if !done && events() == before && BLAMED.get().is_none() {
+			continue;
+		}
+		let task = match id {
+			ROOT => format!("the root future run at {}", root.location),
+			id => format!("the task spawned at {}", spawned[&id].location),
+		};
+		let child = BLAMED
+			.get()
+			.map(|(at, slot)| format!(", in its kio::Tasks child in slot {slot} pushed at {at},"))
+			.unwrap_or_default();
+		panic!("lost wakeup: {task}{child} made progress when polled again at a stall, though nothing woke it");
+	}
+}
+
+/// How a [`Tasks`](crate::Tasks) pass runs its children inside a run that schedules
+/// them: the order, where to stop early, and every child while probing.
+pub(crate) struct Children {
+	runtime: Rc<Runtime>,
+	probing: bool,
+}
+
+/// The current run's say over a task set's pass, or `None` where the set keeps its own
+/// slot order: outside a run, and in a FIFO run that is not probing.
+pub(crate) fn children() -> Option<Children> {
+	let probing = PROBING.get();
+	let runtime = current()?;
+	if !probing && runtime.schedule.borrow().is_fifo() {
+		return None;
+	}
+	Some(Children { runtime, probing })
+}
+
+/// A new child's priority: drawn from the current run's schedule, or 0 outside one.
+pub(crate) fn child_priority() -> Priority {
+	current().map_or(0, |runtime| runtime.schedule.borrow_mut().priority())
+}
+
+impl Children {
+	/// Whether the pass polls every child for a probe.
+	pub(crate) fn probing(&self) -> bool {
+		self.probing
+	}
+
+	/// Which of the `woken` children, given by priority, runs next, or `None` to leave the
+	/// rest for the owner's next poll. A pass that `ran` nothing yet always runs one.
+	pub(crate) fn pick(&self, woken: &[Priority], ran: bool) -> Option<usize> {
+		if self.probing {
+			// Every child, once each, in slot order.
+			return Some(0);
+		}
+		let other = {
+			let running = self.runtime.running.get();
+			let ready = self.runtime.ready.0.lock().unwrap();
+			let priorities = self.runtime.priorities.borrow();
+			ready
+				.iter()
+				.filter(|&&id| id != running)
+				.filter_map(|id| priorities.get(id).copied())
+				.max()
+		};
+		self.runtime.schedule.borrow_mut().pick_child(woken, ran, other)
+	}
+
+	/// Count a child's poll, which woke itself while it ran when `yielded`.
+	pub(crate) fn ran(&self, priority: &mut Priority, yielded: bool) {
+		if !self.probing {
+			self.runtime.schedule.borrow_mut().ran(priority, yielded);
+		}
+	}
+
+	/// The probe's event count, to compare across a child's poll.
+	pub(crate) fn events(&self) -> u64 {
+		events()
+	}
+
+	/// Blame the child in `slot`, pushed at `location`, for progress the probe saw,
+	/// unless an earlier one already is.
+	pub(crate) fn blame(&self, location: &'static Location<'static>, slot: usize) {
+		if BLAMED.get().is_none() {
+			BLAMED.set(Some((location, slot)));
+		}
+	}
 }
 
 /// Keep `deadlines` in step with simulated time until every clone of it is dropped.
@@ -522,6 +811,7 @@ impl Timer {
 			return Poll::Ready(());
 		}
 		let key = *self.key.get_or_insert_with(|| {
+			event();
 			let id = time.next;
 			time.next += 1;
 			(self.at, id)
@@ -641,6 +931,7 @@ impl<T> Drop for JoinHandle<T> {
 /// # Panics
 ///
 /// Outside [`run`].
+#[track_caller]
 pub fn spawn<F>(future: F) -> JoinHandle<F::Output>
 where
 	F: Future + 'static,
@@ -691,7 +982,20 @@ where
 		finish(output.map_err(|panic| JoinError(Some(panic))));
 		Poll::Ready(())
 	});
-	runtime.spawned.borrow_mut().push(Box::pin(task));
+	let id = runtime.next.get();
+	runtime.next.set(id + 1);
+	let priority = runtime.schedule.borrow_mut().priority();
+	runtime.priorities.borrow_mut().insert(id, priority);
+	let queue = TaskWaker::new(id, &runtime.ready);
+	let task = Spawned {
+		task: Box::pin(task),
+		waker: Waker::from(queue.clone()),
+		queue,
+		location: Location::caller(),
+	};
+	// Queued here, so it runs ahead of whatever the spawner wakes next.
+	task.waker.wake_by_ref();
+	runtime.spawned.borrow_mut().push((id, task));
 	JoinHandle { join }
 }
 
@@ -719,6 +1023,8 @@ impl<T> Drop for Cancel<T> {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use std::collections::HashSet;
+
 	use crate::clock::{Deadline, Deadlines, Elapsed, MissedTickBehavior};
 
 	fn spin() {
@@ -730,27 +1036,35 @@ mod tests {
 		}
 	}
 
+	/// Run `future` in wake order without probing, for a test that counts polls or
+	/// observes the order tasks run in, whatever the environment asks for.
+	fn fifo<F: IntoFuture>(future: F) -> F::Output {
+		run_with(0, Config::default(), future)
+	}
+
 	/// A task resetting its sleep to the same deadline on every poll still parks
 	/// until that deadline, rather than waking itself and spinning.
-	#[crate::test]
-	async fn a_same_deadline_reset_does_not_wake() {
-		let at = crate::clock::now().saturating_add(Duration::from_secs(1));
-		let mut sleep = Box::pin(crate::clock::sleep(Duration::from_secs(1)));
-		let mut polls = 0;
-		std::future::poll_fn(|cx| {
-			polls += 1;
-			assert!(polls <= 3, "the sleep woke its task without time passing");
-			// The first poll arms the sleep and wakes once, so the next poll
-			// resets an armed entry before the deadline.
-			if polls == 1 {
-				cx.waker().wake_by_ref();
-			} else {
-				sleep.as_mut().reset(at);
-			}
-			sleep.as_mut().poll(cx)
-		})
-		.await;
-		assert_eq!(crate::clock::now(), at);
+	#[test]
+	fn a_same_deadline_reset_does_not_wake() {
+		fifo(async {
+			let at = crate::clock::now().saturating_add(Duration::from_secs(1));
+			let mut sleep = Box::pin(crate::clock::sleep(Duration::from_secs(1)));
+			let mut polls = 0;
+			std::future::poll_fn(|cx| {
+				polls += 1;
+				assert!(polls <= 3, "the sleep woke its task without time passing");
+				// The first poll arms the sleep and wakes once, so the next poll
+				// resets an armed entry before the deadline.
+				if polls == 1 {
+					cx.waker().wake_by_ref();
+				} else {
+					sleep.as_mut().reset(at);
+				}
+				sleep.as_mut().poll(cx)
+			})
+			.await;
+			assert_eq!(crate::clock::now(), at);
+		});
 	}
 
 	#[test]
@@ -1007,25 +1321,28 @@ mod tests {
 		assert_eq!(crate::clock::now(), at(10));
 	}
 
-	#[crate::test]
-	async fn equal_deadlines_fire_in_arming_order() {
-		let order = Rc::new(RefCell::new(Vec::new()));
-		// Created in one order; a sleep arms on its first poll, so spawning them in
-		// the other order arms them in that order.
-		let first = crate::clock::sleep_until(at(1));
-		let second = crate::clock::sleep_until(at(1));
-		let record = |name: &'static str, sleep: crate::clock::Sleep| {
-			let order = order.clone();
-			spawn(async move {
-				sleep.await;
-				order.borrow_mut().push(name);
-			})
-		};
-		let a = record("second", second);
-		let b = record("first", first);
-		a.await.unwrap();
-		b.await.unwrap();
-		assert_eq!(*order.borrow(), ["second", "first"]);
+	/// Observed through the order the woken tasks run in, so in wake order.
+	#[test]
+	fn equal_deadlines_fire_in_arming_order() {
+		fifo(async {
+			let order = Rc::new(RefCell::new(Vec::new()));
+			// Created in one order; a sleep arms on its first poll, so spawning them in
+			// the other order arms them in that order.
+			let first = crate::clock::sleep_until(at(1));
+			let second = crate::clock::sleep_until(at(1));
+			let record = |name: &'static str, sleep: crate::clock::Sleep| {
+				let order = order.clone();
+				spawn(async move {
+					sleep.await;
+					order.borrow_mut().push(name);
+				})
+			};
+			let a = record("second", second);
+			let b = record("first", first);
+			a.await.unwrap();
+			b.await.unwrap();
+			assert_eq!(*order.borrow(), ["second", "first"]);
+		});
 	}
 
 	#[crate::test]
@@ -1278,19 +1595,157 @@ mod tests {
 		assert_eq!(crate::clock::now(), at(4));
 	}
 
-	#[crate::test]
-	async fn drive_polls_at_each_requested_instant() {
-		let mut polls = Vec::new();
-		let err = crate::clock::drive(|now, _waiter| {
-			polls.push(now);
-			match polls.len() {
-				3 => Err("done"),
-				n => Ok(Some(now.saturating_add(Duration::from_secs(n as u64)))),
+	/// The machine counts its polls, so a probe's extra poll would move it.
+	#[test]
+	fn drive_polls_at_each_requested_instant() {
+		fifo(async {
+			let mut polls = Vec::new();
+			let err = crate::clock::drive(|now, _waiter| {
+				polls.push(now);
+				match polls.len() {
+					3 => Err("done"),
+					n => Ok(Some(now.saturating_add(Duration::from_secs(n as u64)))),
+				}
+			})
+			.await;
+			assert_eq!(err, "done");
+			assert_eq!(polls, [at(0), at(1), at(3)]);
+		});
+	}
+
+	fn probing() -> Config {
+		Config {
+			probe: true,
+			..Config::default()
+		}
+	}
+
+	fn random() -> Config {
+		Config {
+			policy: schedule::Policy::Random,
+			probe: false,
+		}
+	}
+
+	fn pct() -> Config {
+		Config {
+			policy: schedule::Policy::Pct { depth: 3, steps: 20 },
+			probe: false,
+		}
+	}
+
+	/// A task that a flag lets finish, though raising the flag wakes nobody: only a
+	/// timer at 5 s, which hides the lost wakeup, wakes it.
+	fn unwoken() -> impl FnMut(&crate::Waiter) -> Poll<()> + use<> {
+		let flag = Rc::new(Cell::new(false));
+		let raise = flag.clone();
+		let mut sleep = Box::pin(crate::clock::sleep(Duration::from_secs(5)));
+		let mut raised = false;
+		move |waiter| {
+			if !std::mem::replace(&mut raised, true) {
+				// Raised once the first poll has parked, with nobody woken.
+				drop(spawn({
+					let raise = raise.clone();
+					async move { raise.set(true) }
+				}));
 			}
+			match flag.get() {
+				true => Poll::Ready(()),
+				false => waiter.poll_future(sleep.as_mut()),
+			}
+		}
+	}
+
+	/// Without the probe, the timer hides the lost wakeup.
+	#[test]
+	fn a_masked_lost_wakeup_passes_unprobed() {
+		fifo(async {
+			spawn(crate::wait(unwoken())).await.unwrap();
+			assert_eq!(crate::clock::now(), at(5), "only the timer woke it");
+		});
+	}
+
+	#[test]
+	#[should_panic(expected = "lost wakeup: the task spawned at src/clock/sim.rs")]
+	fn the_probe_catches_a_lost_wakeup_a_timer_masks() {
+		run_with(0, probing(), async {
+			spawn(crate::wait(unwoken())).await.unwrap();
+		});
+	}
+
+	#[test]
+	#[should_panic(expected = "in its kio::Tasks child in slot 1 pushed at src/clock/sim.rs")]
+	fn the_probe_blames_a_task_set_child() {
+		run_with(0, probing(), async {
+			type Boxed = Box<dyn FnMut(&crate::Waiter) -> Poll<()>>;
+			let mut tasks: crate::Tasks<Boxed> = crate::Tasks::new();
+			tasks.push(Box::new(|_: &crate::Waiter| Poll::Pending));
+			tasks.push(Box::new(unwoken()));
+			crate::wait(|waiter| tasks.poll(waiter)).await;
+		});
+	}
+
+	/// Every task that was ready runs before a yielding task resumes, whatever the schedule.
+	#[test]
+	fn a_yield_lets_every_ready_task_run_first() {
+		for config in [Config::default(), random(), pct()] {
+			for seed in 0..20 {
+				run_with(seed, config.clone(), async {
+					let ran = Rc::new(Cell::new(0));
+					for _ in 0..4 {
+						let ran = ran.clone();
+						drop(spawn(async move { ran.set(ran.get() + 1) }));
+					}
+					yield_now().await;
+					assert_eq!(ran.get(), 4, "{config:?} seed {seed}");
+				});
+			}
+		}
+	}
+
+	/// The order four ready tasks, or four new children of one set, first run in.
+	fn first_order(config: &Config, seed: u64, children: bool) -> Vec<usize> {
+		run_with(seed, config.clone(), async move {
+			let order = Rc::new(RefCell::new(Vec::new()));
+			if children {
+				let mut tasks = crate::Tasks::new();
+				for id in 0..4 {
+					let order = order.clone();
+					tasks.push(move |_: &crate::Waiter| {
+						order.borrow_mut().push(id);
+						Poll::Ready(())
+					});
+				}
+				crate::wait(|waiter| tasks.poll(waiter)).await;
+			} else {
+				let tasks: Vec<_> = (0..4)
+					.map(|id| {
+						let order = order.clone();
+						spawn(async move { order.borrow_mut().push(id) })
+					})
+					.collect();
+				for task in tasks {
+					task.await.unwrap();
+				}
+			}
+			order.take()
 		})
-		.await;
-		assert_eq!(err, "done");
-		assert_eq!(polls, [at(0), at(1), at(3)]);
+	}
+
+	/// FIFO keeps wake and slot order; the adversarial schedules vary it, replaying it
+	/// from the seed.
+	#[test]
+	fn adversarial_schedules_reorder_tasks_and_children() {
+		for children in [false, true] {
+			let orders = |config: &Config| -> HashSet<Vec<usize>> {
+				(0..20).map(|seed| first_order(config, seed, children)).collect()
+			};
+			assert_eq!(orders(&Config::default()), HashSet::from([vec![0, 1, 2, 3]]));
+			for config in [random(), pct()] {
+				assert!(orders(&config).len() > 1, "{config:?} children {children}");
+				assert_eq!(first_order(&config, 7, children), first_order(&config, 7, children));
+			}
+		}
 	}
 
 	/// Draws across awaits and spawned tasks, so replay covers the run's whole schedule.
