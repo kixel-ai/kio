@@ -21,8 +21,9 @@ m2 matches moq's m4: later work, not current.
 
 - Build on the post-merge Miri lane that `quest/m1/ci-coverage.md`
   ([kixel-ai/kio#1](https://github.com/kixel-ai/kio/pull/1)) restores, which
-  runs each test once. Add a pass over the tests that spawn threads (in
-  `src/log.rs` and `src/channel.rs` today) with `-Zmiri-many-seeds`, keeping
+  runs each test once. Add a pass over every Miri-compatible library test
+  that spawns threads (grep `src/` for `thread::spawn`: `log`, `channel`,
+  `weak`, `task`, and `clock` modules today) with `-Zmiri-many-seeds`, keeping
   `log::` on Tree Borrows as that lane does. Choose the seed count from the
   measured time.
 - ThreadSanitizer: a `just tsan` recipe builds std with the sanitizer
