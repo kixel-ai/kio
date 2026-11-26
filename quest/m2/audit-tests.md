@@ -15,7 +15,7 @@ What the measurement cannot see:
 
 - Doc tests: cargo-llvm-cov runs them only on nightly.
 - `kio-macros`' rejections: trybuild compiles `macros/tests/ui/` in a child rustc that is not instrumented, so every `syn::Error` branch reads uncovered. Compare the `error:` lines in `macros/tests/ui/*.stderr` against the messages in `macros/src/` instead.
-- The `runtime.rs` guard tests (`a_wait_on_the_host_clock_aborts` and its siblings): their child process aborts before writing a profile.
+- The `runtime.rs` guard tests (`a_wait_on_the_host_clock_exits` and its siblings) ran in a child that aborted before writing a profile. [kixel-ai/kio#2](https://github.com/kixel-ai/kio/pull/2) made it exit with 101 instead, which runs the profile writer, so check whether they now count.
 - The default build (no `runtime` feature): the self dev-dependency in `Cargo.toml` turns on `async`, `manual`, `sim`, and `serde` for every test build, so the std fallback clock in `src/clock/runtime.rs` (`cfg(not(feature = "runtime"))`) compiles under `just check` but never runs.
 
 ### Check first
