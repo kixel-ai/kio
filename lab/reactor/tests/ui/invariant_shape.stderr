@@ -1,0 +1,5 @@
+error: an `#[invariant]` is `fn name(&self) -> bool`
+  --> tests/ui/invariant_shape.rs:15:5
+   |
+15 |     fn holds(&self) -> Result<(), String> {
+   |        ^^^^^
