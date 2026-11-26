@@ -68,6 +68,8 @@
           # shell doesn't download Verus's toolchain; Linux only, as Verus's release is.
           // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
             verus = pkgs.mkShell { packages = devPackages ++ [ verus ]; };
+            # lab/pure-machine's Charon, Aeneas, and Lean, Linux only as Aeneas's release is.
+            prove = import ./lab/pure-machine/prove.nix { inherit pkgs; };
           };
           formatter = pkgs.nixfmt;
           checks.quest-tree = pkgs.runCommand "quest-tree" { nativeBuildInputs = [ quest-cli ]; } ''
