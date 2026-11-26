@@ -68,6 +68,9 @@ thread_local! {
 	static SCHEDULING: Cell<bool> = const { Cell::new(false) };
 	/// The first child a probe saw make progress, with where it was pushed.
 	static BLAMED: Cell<Option<(&'static Location<'static>, usize)>> = const { Cell::new(None) };
+	/// Set when [`yield_now`] parks the task being polled, which then runs behind every
+	/// task already ready. Any other wake it makes of itself keeps its place in wake order.
+	static YIELDED: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Count an event a probe watches for.
@@ -532,7 +535,9 @@ fn run_inner(runtime: &Runtime, future: Pin<&mut dyn Future<Output = ()>>, locat
 		};
 		if let Some(id) = picked {
 			runtime.running.set(id);
+			YIELDED.set(false);
 			let (done, woke) = root.poll(&mut spawned, id);
+			let yields = woke && YIELDED.take();
 			if done && id == ROOT {
 				break;
 			}
@@ -545,9 +550,9 @@ fn run_inner(runtime: &Runtime, future: Pin<&mut dyn Future<Output = ()>>, locat
 				}
 				continue;
 			}
-			if woke {
-				// A wake while it ran coalesced into a place it may already hold near the
-				// front: it goes behind every task that was ready, as a yield promises.
+			if yields {
+				// Its wake may have coalesced into a place it already held near the front:
+				// it goes behind every task that was ready, as a yield promises.
 				let mut ready = runtime.ready.0.lock().unwrap();
 				if let Some(at) = ready.iter().position(|&queued| queued == id) {
 					ready.remove(at);
@@ -800,6 +805,7 @@ pub fn yield_now() -> impl Future<Output = ()> {
 			return Poll::Ready(());
 		}
 		yielded = true;
+		YIELDED.set(true);
 		cx.waker().wake_by_ref();
 		Poll::Pending
 	})
@@ -1773,6 +1779,40 @@ mod tests {
 				});
 			}
 		}
+	}
+
+	/// A task that wakes itself and then a sibling, without yielding, runs first in FIFO.
+	#[test]
+	fn a_self_wake_keeps_its_place_in_wake_order() {
+		fifo(async {
+			let order = Rc::new(RefCell::new(Vec::new()));
+			let parked: Rc<RefCell<Option<std::task::Waker>>> = Rc::default();
+			let sibling = spawn({
+				let (order, parked) = (order.clone(), parked.clone());
+				std::future::poll_fn(move |cx| match parked.borrow_mut().replace(cx.waker().clone()) {
+					None => Poll::Pending,
+					Some(_) => {
+						order.borrow_mut().push("sibling");
+						Poll::Ready(())
+					}
+				})
+			});
+			yield_now().await;
+			let mut woke = false;
+			std::future::poll_fn(|cx| {
+				if woke {
+					order.borrow_mut().push("root");
+					return Poll::Ready(());
+				}
+				woke = true;
+				cx.waker().wake_by_ref();
+				parked.borrow().as_ref().expect("the sibling parked").wake_by_ref();
+				Poll::Pending
+			})
+			.await;
+			sibling.await.unwrap();
+			assert_eq!(*order.borrow(), ["root", "sibling"]);
+		});
 	}
 
 	/// An `idle` future polled at every stall keeps one registration.
