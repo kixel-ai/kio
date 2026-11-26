@@ -27,8 +27,9 @@
 //!
 //! Wakes land in a chunked atomic bitset rather than a queue (the approach
 //! [unicycle](https://github.com/udoprog/unicycle) proved out against
-//! `FuturesUnordered`'s intrusive list): a wake is one `fetch_or`, lock-free,
-//! and inherently deduplicated since setting a set bit is a no-op. Each poll
+//! `FuturesUnordered`'s intrusive list): a wake is one `fetch_or`, and
+//! inherently deduplicated since setting a set bit is a no-op. Only a burst's
+//! first wake takes a lock, to wake whoever polls the set. Each poll
 //! snapshots the woken words with `swap(0)` before running anything, so a task
 //! woken mid-pass lands in the next pass instead of spinning this one. Because
 //! tasks are closures, not pinned futures, a slot's identity is stable and its

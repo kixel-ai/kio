@@ -234,7 +234,7 @@ impl Timer {
 ///
 /// With `KIO_DENY_HOST_TIMERS=1` in the environment, a timer that waits on the host clock
 /// exits the process with a failure unless it called this. It lasts for the process, which is one test
-/// under nextest. `@moq/clock/test`'s `hostTime()` is the JS counterpart.
+/// under nextest.
 pub fn host_time() {
 	#[cfg(feature = "runtime")]
 	guard::ALLOWED.store(true, std::sync::atomic::Ordering::Relaxed);

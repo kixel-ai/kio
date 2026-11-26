@@ -15,9 +15,9 @@ check:
     nixfmt --check flake.nix nix/verus.nix
     quest check
 
-# Run unit, doc, and trybuild UI tests across the workspace.
+# Run unit, doc, and trybuild UI tests across the workspace, failing on any host-clock timer.
 test *args:
-    cargo test --locked --workspace --all-features {{ args }}
+    KIO_DENY_HOST_TIMERS=1 cargo test --locked --workspace --all-features {{ args }}
 
 # Run what CI runs: lint, then test.
 ci: check test

@@ -19,7 +19,6 @@
 
   outputs =
     {
-      self,
       nixpkgs,
       flake-utils,
       rust-overlay,
@@ -57,10 +56,7 @@
           verus = pkgs.callPackage ./nix/verus.nix { inherit (pkgs) rust-bin; };
         in
         {
-          packages = {
-            quest = quest-cli;
-          }
-          // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux { inherit verus; };
+          packages = pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux { inherit verus; };
           devShells = {
             default = pkgs.mkShell { packages = devPackages; };
           }
@@ -72,10 +68,6 @@
             prove = import ./lab/pure-machine/prove.nix { inherit pkgs; };
           };
           formatter = pkgs.nixfmt;
-          checks.quest-tree = pkgs.runCommand "quest-tree" { nativeBuildInputs = [ quest-cli ]; } ''
-            quest --root ${self} check
-            touch "$out"
-          '';
         }
       );
 }
