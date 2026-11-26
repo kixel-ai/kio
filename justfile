@@ -12,7 +12,7 @@ check:
     cargo fmt --all --check
     actionlint
     taplo format --check
-    nixfmt --check flake.nix
+    nixfmt --check flake.nix nix/verus.nix
     quest check
 
 # Run unit, doc, and trybuild UI tests across the workspace.
@@ -23,8 +23,12 @@ test *args:
 # Run what CI runs: lint, then test.
 ci: check test
 
+# Prove the `verus!` code in src/log.rs. Needs Verus: run it in `nix develop .#verus`.
+verify:
+    cargo verus verify -p kio
+
 # Apply formatters without changing program behavior.
 fix:
     cargo fmt --all
     taplo format
-    nixfmt flake.nix
+    nixfmt flake.nix nix/verus.nix

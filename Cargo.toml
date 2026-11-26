@@ -5,6 +5,14 @@ resolver = "2"
 [workspace.package]
 rust-version = "1.91"
 
+[workspace.lints.rust]
+# Set by `cargo verus`, which keeps the ghost code plain builds erase.
+unexpected_cfgs = { level = "warn", check-cfg = [
+    "cfg(verus_only)",
+    "cfg(verus_keep_ghost)",
+    "cfg(verus_keep_ghost_body)",
+] }
+
 [workspace.lints.clippy]
 # Every suppression says why, so the next lint audit can judge it.
 allow_attributes_without_reason = "warn"
@@ -71,6 +79,9 @@ rand = { workspace = true }
 serde = { workspace = true, optional = true }
 serde_with = { workspace = true, optional = true }
 smallvec = { version = "1.15", features = ["union"] }
+# Verus's specs and ghost types for the proof in src/log.rs, erased from plain builds.
+# Pinned to the Verus release in nix/verus.nix, which checks it.
+vstd = "=0.0.0-2026-11-22-0344"
 # The host timers, and the runtime handle that keeps a paused runtime's clock on its own origin.
 tokio = { workspace = true, features = ["rt", "time"], optional = true }
 
@@ -110,3 +121,6 @@ harness = false
 
 [lints]
 workspace = true
+
+[package.metadata.verus]
+verify = true

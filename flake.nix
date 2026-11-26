@@ -42,22 +42,28 @@
           };
           toolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
           quest-cli = quest.packages.${system}.default;
+          devPackages = with pkgs; [
+            toolchain
+            quest-cli
+            just
+            jq
+            git
+            gh
+            actionlint
+            taplo
+            nixfmt
+          ];
+          verus = pkgs.callPackage ./nix/verus.nix { inherit (pkgs) rust-bin; };
         in
         {
-          packages.quest = quest-cli;
-          devShells.default = pkgs.mkShell {
-            packages = with pkgs; [
-              toolchain
-              quest-cli
-              just
-              jq
-              git
-              gh
-              actionlint
-              taplo
-              nixfmt
-            ];
+          packages = {
+            quest = quest-cli;
+            inherit verus;
           };
+          devShells.default = pkgs.mkShell { packages = devPackages; };
+          # The default shell plus Verus, for `just verify`. Separate so the merge gate's
+          # shell doesn't download Verus's toolchain.
+          devShells.verus = pkgs.mkShell { packages = devPackages ++ [ verus ]; };
           formatter = pkgs.nixfmt;
           checks.quest-tree = pkgs.runCommand "quest-tree" { nativeBuildInputs = [ quest-cli ]; } ''
             quest --root ${self} check
