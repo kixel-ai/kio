@@ -19,7 +19,7 @@ Baseline from the 2026-11-26 run, the first since kio left `moq-dev/moq`:
   - `just ci` before pushing, skipped once on a quest-only change: about 17 s warm.
   - The poll-first and `unsafe` rules, which no session touched in a one-day window: they guard kio's core design.
 - Check first:
-  - `CONTRIBUTING.md`'s "No ruleset requires `check` yet" sentence, which [required-check](/quest/m1/required-check.md) deletes once it lands.
+  - `CONTRIBUTING.md`'s Landing section: [required-check](/quest/m1/required-check.md)'s merge queue retires its "No ruleset requires `check` yet" sentence and `--squash`.
   - `AGENTS.md`'s host-clock test rule, once `just test` sets `KIO_DENY_HOST_TIMERS=1` (from the m1 code audit): whether it can shrink to naming `kio::clock::host_time()`.
   - `AGENTS.md`'s "no coroutines" promise, which only [coroutines-check](/quest/m1/coroutines-check.md) enforces.
 
