@@ -19,8 +19,7 @@ them; moq's quest keeps moq-net. The decisions carry over: shim-free tools only
 needing a `cfg(loom)` shim around every primitive and never finding a race).
 m2 matches moq's m4: later work, not current.
 
-- Build on the post-merge Miri lane that `quest/m1/ci-coverage.md`
-  ([kixel-ai/kio#1](https://github.com/kixel-ai/kio/pull/1)) restores, which
+- Build on the post-merge Miri lane that [ci-coverage](/quest/m1/ci-coverage.md) restores, which
   runs each test once. Add a pass over every Miri-compatible library test
   that spawns threads (grep `src/` for `thread::spawn`: `log`, `channel`,
   `weak`, `task`, and `clock` modules today) with `-Zmiri-many-seeds`, keeping
@@ -34,6 +33,10 @@ m2 matches moq's m4: later work, not current.
   each recipe's doc line.
 
 Public API: none. Wire: none.
+
+## Required
+
+- [Restore CI coverage](/quest/m1/ci-coverage.md) - the post-merge Miri lane this adds a pass to
 
 ## Related
 
