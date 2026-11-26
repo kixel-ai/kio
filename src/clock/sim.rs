@@ -68,6 +68,9 @@ thread_local! {
 	static SCHEDULING: Cell<bool> = const { Cell::new(false) };
 	/// The first child a probe saw make progress, with where it was pushed.
 	static BLAMED: Cell<Option<(&'static Location<'static>, usize)>> = const { Cell::new(None) };
+	/// The task being polled, and whether its own waker fired on this thread since, so a
+	/// worker thread's wake is no yield to demote.
+	static POLLED: Cell<(usize, bool)> = const { Cell::new((usize::MAX, false)) };
 	/// Set when [`yield_now`] parks the task being polled, which then runs behind every
 	/// task already ready. Any other wake it makes of itself keeps its place in wake order.
 	static YIELDED: Cell<bool> = const { Cell::new(false) };
@@ -370,6 +373,12 @@ impl Wake for TaskWaker {
 			return;
 		}
 		event();
+		// Another thread's copy never names a task of this run's thread.
+		let _ = POLLED.try_with(|polled| {
+			if polled.get().0 == self.id {
+				polled.set((self.id, true));
+			}
+		});
 		if !self.queued.swap(true, Ordering::AcqRel) {
 			self.ready.0.lock().unwrap().push_back(self.id);
 		}
@@ -559,7 +568,9 @@ fn run_inner(runtime: &Runtime, future: Pin<&mut dyn Future<Output = ()>>, locat
 		if let Some(id) = picked {
 			runtime.running.set(id);
 			YIELDED.set(false);
+			POLLED.set((id, false));
 			let (done, woke) = root.poll(&mut spawned, id);
+			let (_, woke_itself) = POLLED.replace((usize::MAX, false));
 			let yields = woke && YIELDED.take();
 			if done && id == ROOT {
 				break;
@@ -586,7 +597,7 @@ fn run_inner(runtime: &Runtime, future: Pin<&mut dyn Future<Output = ()>>, locat
 				yielded.insert(id);
 			}
 			if let Some(priority) = runtime.priorities.borrow_mut().get_mut(&id) {
-				runtime.schedule.borrow_mut().ran(priority, woke);
+				runtime.schedule.borrow_mut().ran(priority, woke_itself);
 			}
 			continue;
 		}
@@ -601,6 +612,10 @@ fn run_inner(runtime: &Runtime, future: Pin<&mut dyn Future<Output = ()>>, locat
 			probe(runtime, &mut root, &mut spawned);
 			// A probed task may have attached a queue, which wakes nothing.
 			queued = runtime.advance_queues();
+			// The probe stops at a wake from another thread, which the scheduler runs.
+			if !runtime.ready.is_empty() {
+				continue;
+			}
 		}
 		if runtime.advance(queued) {
 			continue;
@@ -636,6 +651,10 @@ fn probe(runtime: &Runtime, root: &mut Root<'_>, spawned: &mut BTreeMap<usize, S
 
 	let ids: Vec<usize> = std::iter::once(ROOT).chain(spawned.keys().copied()).collect();
 	for id in ids {
+		// A wake from another thread queued a task: the scheduler runs it, not the probe.
+		if !runtime.ready.is_empty() {
+			return;
+		}
 		let before = events();
 		BLAMED.set(None);
 		runtime.running.set(id);
@@ -1832,6 +1851,57 @@ mod tests {
 				deadline.poll(waiter)
 			})
 			.await;
+		});
+	}
+
+	/// A wake from another thread during a probe goes to the scheduler, so the woken task's
+	/// next poll is no lost wakeup.
+	#[test]
+	fn the_probe_leaves_a_worker_thread_wake_to_the_scheduler() {
+		run_with(0, probing(), async {
+			let parked: Arc<Mutex<Option<std::task::Waker>>> = Arc::default();
+			let mut woken = false;
+			let mut task = Box::pin(spawn({
+				let parked = parked.clone();
+				std::future::poll_fn(move |cx| match std::mem::replace(&mut woken, true) {
+					false => {
+						*parked.lock().unwrap() = Some(cx.waker().clone());
+						Poll::Pending
+					}
+					true => Poll::Ready(()),
+				})
+			}));
+			let mut signalled = false;
+			crate::wait(|waiter| {
+				if super::probing() && !std::mem::replace(&mut signalled, true) {
+					let waker = parked.lock().unwrap().take().expect("parked");
+					std::thread::spawn(move || waker.wake()).join().unwrap();
+				}
+				waiter.poll_future(task.as_mut())
+			})
+			.await
+			.unwrap();
+		});
+	}
+
+	/// Under `pct`, a task another thread wakes while it runs keeps its rank: only its own
+	/// wake is a yield.
+	#[test]
+	fn a_worker_thread_wake_is_not_a_yield() {
+		run_with(0, pct(), async {
+			let mut polls = 0;
+			crate::wait(|waiter| {
+				polls += 1;
+				if polls == 1 {
+					let waker = waiter.waker().clone();
+					std::thread::spawn(move || waker.wake()).join().unwrap();
+					return Poll::Pending;
+				}
+				Poll::Ready(())
+			})
+			.await;
+			let priority = expect_current().priorities.borrow()[&ROOT];
+			assert!(priority >= 1, "demoted to {priority}");
 		});
 	}
 

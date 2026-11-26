@@ -808,8 +808,8 @@ mod tests {
 
 	/// The spike's numbers, as Markdown tables: each bug's catch rate, first catching seed,
 	/// and cost per seed under each schedule, with and without the probe; then the bounded
-	/// explorer against random and PCT schedules on fixed data, and how many adjacent polls
-	/// commute, the reduction partial-order methods could find.
+	/// explorer against random and PCT schedules on fixed data, and how many successive
+	/// state-changing polls commute.
 	///
 	/// `cargo test --release -p kio --lib credit::tests::report -- --ignored --nocapture`
 	#[test]
@@ -980,8 +980,8 @@ mod tests {
 			);
 		}
 
-		// How often two adjacent polls by different units touch disjoint state, so their
-		// order cannot matter.
+		// How often two successive logged polls by different units touch disjoint state, so
+		// their order cannot matter. Only polls that change the session are logged.
 		let observed = Rc::new(RefCell::new(Observed::default()));
 		let (mut pairs, mut independent) = (0usize, 0usize);
 		for seed in 0..200 {
@@ -1001,7 +1001,7 @@ mod tests {
 		}
 		println!();
 		println!(
-			"Adjacent polls by different units that commute: {independent} of {pairs} ({:.1}%)",
+			"Successive state-changing polls by different units that commute: {independent} of {pairs} ({:.1}%)",
 			100.0 * independent as f64 / pairs as f64
 		);
 		let _ = std::panic::take_hook();
