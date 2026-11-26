@@ -476,8 +476,7 @@ impl Session {
 	/// subscription outranks it, so only a higher priority can reset it.
 	fn check_quiet(&self) {
 		for sub in 0..self.fixture.subs {
-			for group in 0..self.fixture.groups {
-				let st = self.st[sub][group];
+			for (group, &st) in self.st[sub].iter().enumerate() {
 				assert!(
 					matches!(st, St::Closed | St::Given),
 					"Ends: quiet with subscription {sub}'s group {group} {st:?}"

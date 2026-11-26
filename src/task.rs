@@ -152,6 +152,13 @@ struct Shared {
 	/// The chunks with a marked summary: bit `c % 64` for chunk `c`. The top
 	/// level of the wake index, so a poll skips the chunks nothing woke.
 	ready: AtomicU64,
+	/// The slot the simulator is polling, or `usize::MAX`, so its waker can tell a
+	/// self-wake apart: a sibling may have set the slot's wake bit already.
+	#[cfg(feature = "sim")]
+	polling: std::sync::atomic::AtomicUsize,
+	/// Whether the polled slot's waker fired during its poll.
+	#[cfg(feature = "sim")]
+	self_woke: AtomicBool,
 }
 
 impl Shared {
@@ -298,7 +305,14 @@ impl Wake for SlotWaker {
 
 	fn wake_by_ref(self: &Arc<Self>) {
 		#[cfg(feature = "sim")]
-		crate::clock::sim::event();
+		{
+			crate::clock::sim::event();
+			// Relaxed: the poll that reads it runs on this thread, and a wake from
+			// another thread mid-poll is no yield to detect.
+			if self.shared.polling.load(Ordering::Relaxed) == self.slot {
+				self.shared.self_woke.store(true, Ordering::Relaxed);
+			}
+		}
 		// An already-set bit means the slot is queued for the next pass and the
 		// owner was already nudged: a burst of wakes is one bit and one nudge.
 		let index = (self.slot % CHUNK_SLOTS) / WORD_BITS;
@@ -332,6 +346,10 @@ impl<T> Tasks<T> {
 				parent: Mutex::new(None),
 				pending: AtomicBool::new(false),
 				ready: AtomicU64::new(0),
+				#[cfg(feature = "sim")]
+				polling: std::sync::atomic::AtomicUsize::new(usize::MAX),
+				#[cfg(feature = "sim")]
+				self_woke: AtomicBool::new(false),
 			}),
 			scratch: Vec::new(),
 			next: 0,
@@ -710,11 +728,8 @@ impl<T: Task> Tasks<T> {
 		index: usize,
 		done: &mut impl FnMut(T, T::Output),
 	) -> bool {
-		let word = &self.chunks[index / CHUNK_SLOTS].words[(index % CHUNK_SLOTS) / WORD_BITS];
-		let bit = 1 << (index % WORD_BITS);
-		// A sibling that woke it earlier in this pass already set its bit, which then says
-		// nothing of a self-wake, so that poll never counts as a yield.
-		let woken_before = word.load(Ordering::Acquire) & bit != 0;
+		self.shared.polling.store(index, Ordering::Relaxed);
+		self.shared.self_woke.store(false, Ordering::Relaxed);
 		let events = children.events();
 		let occupant = self.children[index].as_mut().expect("woken slot is occupied");
 		let cx = Context::from_waker(&self.wakers[index]);
@@ -723,6 +738,7 @@ impl<T: Task> Tasks<T> {
 			let _scope = crate::coop::child();
 			occupant.task.poll(child_waiter)
 		};
+		self.shared.polling.store(usize::MAX, Ordering::Relaxed);
 		if children.probing() && (poll.is_ready() || children.events() != events) {
 			children.blame(self.sim[index].location, index);
 		}
@@ -739,8 +755,7 @@ impl<T: Task> Tasks<T> {
 				false
 			}
 			Poll::Pending => {
-				let word = &self.chunks[index / CHUNK_SLOTS].words[(index % CHUNK_SLOTS) / WORD_BITS];
-				let yielded = !woken_before && word.load(Ordering::Acquire) & bit != 0;
+				let yielded = self.shared.self_woke.load(Ordering::Relaxed);
 				if let Some((_, priority)) = &mut self.sim[index].priority {
 					children.ran(priority, yielded);
 				}

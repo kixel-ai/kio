@@ -1802,6 +1802,58 @@ mod tests {
 		}
 	}
 
+	/// A child a sibling woke earlier in the pass still yields when it then wakes itself,
+	/// so it runs again only after every sibling woken with it.
+	#[test]
+	fn a_self_wake_after_a_sibling_wake_is_a_yield() {
+		for config in [Config::default(), random(), pct()] {
+			for seed in 0..50 {
+				let name = format!("{config:?} seed {seed}");
+				run_with(seed, config.clone(), async move {
+					let wakers: Rc<RefCell<[Option<std::task::Waker>; 4]>> = Rc::default();
+					let yielded = Rc::new(Cell::new(0));
+					let mut tasks = crate::Tasks::new();
+					for me in 0..4 {
+						let (wakers, yielded, name) = (wakers.clone(), yielded.clone(), name.clone());
+						let mut polls = 0;
+						tasks.push(move |waiter: &crate::Waiter| {
+							polls += 1;
+							let wake_all = |wakers: &[Option<std::task::Waker>; 4]| {
+								wakers.iter().flatten().for_each(std::task::Waker::wake_by_ref);
+							};
+							match polls {
+								// Park until every child has a waker to share, then wake them all.
+								1 => {
+									wakers.borrow_mut()[me] = Some(waiter.waker().clone());
+									if wakers.borrow().iter().all(Option::is_some) {
+										wake_all(&wakers.borrow());
+									}
+									Poll::Pending
+								}
+								// Child 0 wakes the others, unpolled ones included, and finishes.
+								2 if me == 0 => {
+									wake_all(&wakers.borrow());
+									Poll::Ready(())
+								}
+								// The others then wake themselves too: a yield.
+								2 => {
+									yielded.set(yielded.get() + 1);
+									waiter.waker().wake_by_ref();
+									Poll::Pending
+								}
+								_ => {
+									assert_eq!(yielded.get(), 3, "{name}");
+									Poll::Ready(())
+								}
+							}
+						});
+					}
+					crate::wait(|waiter| tasks.poll(waiter)).await;
+				});
+			}
+		}
+	}
+
 	/// A task woken while it runs, then yielding, still goes behind a task woken after it.
 	#[test]
 	fn a_yield_runs_behind_tasks_woken_before_it() {
