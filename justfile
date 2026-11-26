@@ -6,9 +6,8 @@ default:
 
 # Lint the workspace, feature matrix, workflows, TOML, Nix, and quest tree.
 check:
-    cargo clippy --locked --workspace --all-targets -- -D warnings
+    cargo clippy --locked --workspace --all-features --all-targets -- -D warnings
     cargo clippy --locked -p kio --no-default-features -- -D warnings
-    cargo clippy --locked -p kio --all-features --all-targets -- -D warnings
     cargo fmt --all --check
     actionlint
     taplo format --check
@@ -17,8 +16,7 @@ check:
 
 # Run unit, doc, and trybuild UI tests across the workspace.
 test *args:
-    cargo test --locked --workspace {{ args }}
-    cargo test --locked --doc -p kio --all-features
+    cargo test --locked --workspace --all-features {{ args }}
 
 # Run what CI runs: lint, then test.
 ci: check test
