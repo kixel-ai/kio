@@ -40,6 +40,5 @@ Adversarial sim results ([kixel-ai/kio#10](https://github.com/kixel-ai/kio/pull/
 
 ## Related
 
-- [Spike: Verus proves kio::log's commit protocol as written](/quest/m9/verus-kio-log.md) - deductive proofs on `kio`'s unsafe lock-free internals
 - [Miri's GenMC mode explores every schedule of kio's lock-free code](/quest/m2/miri-genmc.md) - weak-memory schedule exploration for `kio`
 - `moq-dev/moq` external TLA+ trace validation quests ([subscribe](https://github.com/moq-dev/moq/blob/main/quest/m4/subscribe-trace-validation.md), [resume](https://github.com/moq-dev/moq/blob/main/quest/m4/resume-trace-validation.md), [reconnect](https://github.com/moq-dev/moq/blob/main/quest/m4/reconnect-trace-validation.md)) and [codec Kani](https://github.com/moq-dev/moq/blob/main/quest/m4/codec-kani.md)

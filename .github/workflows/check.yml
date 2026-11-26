@@ -38,3 +38,15 @@ jobs:
         with:
           path: *cargo-paths
           key: ${{ steps.cargo.outputs.cache-primary-key }}
+
+  # Proves src/log.rs's Verus proof. Separate from `check` so the merge gate's shell
+  # skips Verus's toolchain, and in parallel with it.
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/nix
+      - run: nix develop .#verus --command just verify

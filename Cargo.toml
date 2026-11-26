@@ -5,6 +5,14 @@ resolver = "2"
 [workspace.package]
 rust-version = "1.91"
 
+[workspace.lints.rust]
+# Set by `cargo verus`, which keeps the ghost code plain builds erase.
+unexpected_cfgs = { level = "warn", check-cfg = [
+    "cfg(verus_only)",
+    "cfg(verus_keep_ghost)",
+    "cfg(verus_keep_ghost_body)",
+] }
+
 [workspace.lints.clippy]
 # Every suppression says why, so the next lint audit can judge it.
 allow_attributes_without_reason = "warn"
