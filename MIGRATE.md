@@ -14,6 +14,11 @@ generic parameter and is neither `Send` nor `Sync`. It replaces `Fan::hold()` an
 `Hold<T>`: open a hold before taking the locks whose guards wake waiters, and let it
 drop after them.
 
+The scope changed with it. `Fan::hold()` deferred one fan's wakes made from any
+thread; `kio::hold()` defers every list's wakes, but only those made on the thread
+that opened it. A wake from another thread now lands at once, so a task it wakes may
+find a lock still held: open a hold on every thread that wakes waiters under a lock.
+
 ### `async` methods moved behind the `async` feature ([moq-dev/moq#7506](https://github.com/moq-dev/moq/pull/7506))
 
 `Queue::{push, pop}`, `Producer::{wait, closed, wanted_changed}`, `Consumer::{wait,
@@ -28,8 +33,9 @@ unchanged, and still drives the same wait without it.
 On `Producer` and `ProducerWeak`:
 
 - `is_used()` is now `wanted()`.
-- `Producer::write_unused()` is now `write_unwanted()`, returning `Unwanted`, whose
-  `Used` variant is now `Wanted`.
+- `Producer::write_unused()` is now `write_unwanted()`, and the `Unused` it returned
+  is now `Unwanted`: `Unused::Used` becomes `Unwanted::Wanted`, while `Idle` and
+  `Closed` keep their names.
 - `used()`, `unused()`, `poll_used(waiter)`, and `poll_unused(waiter)` are replaced by
   `poll_wanted_changed(waiter, last)`, which resolves to the new `wanted()` once it
   differs from `last`, or `Err(Closed)`. `Producer::wanted_changed(last)` awaits it

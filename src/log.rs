@@ -15,8 +15,9 @@
 //! collector, which drops them in place. A reader holds nothing between reads: it reads
 //! through a [`Read`], which pins the log only while it lives. A retired segment is
 //! freed, and an evicted entry of a live one dropped, once every pin taken before its
-//! eviction is gone (epoch-based reclamation), so eviction frees memory whatever readers
-//! do, and a reader that stopped reading finds its entries [`Evicted`] when it comes back.
+//! eviction is gone (epoch-based reclamation). So whatever readers do, eviction frees an
+//! entry's own allocations once it drops and its slot once its segment retires, and a
+//! reader that stopped reading finds its entries [`Evicted`] when it comes back.
 
 use std::{
 	alloc::{self, Layout},
