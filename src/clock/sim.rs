@@ -751,7 +751,15 @@ impl Children {
 pub fn attach(deadlines: &Deadlines) {
 	let runtime = expect_current();
 	deadlines.sync(runtime.now());
-	runtime.queues.borrow_mut().push(WeakDeadlines::new(deadlines));
+	let mut queues = runtime.queues.borrow_mut();
+	if queues.iter().any(|queue| queue.is(deadlines)) {
+		return;
+	}
+	// An armed deadline joins the run as a timer would, so the probe counts it.
+	if deadlines.next().is_some() {
+		event();
+	}
+	queues.push(WeakDeadlines::new(deadlines));
 }
 
 /// Let `duration` of simulated time pass, moving both the instant and the wall
@@ -1807,9 +1815,11 @@ mod tests {
 		});
 	}
 
-	/// A queue a probed task attaches still fires its armed deadline.
+	/// A queue only the probe's re-poll attaches, holding an armed deadline, would have
+	/// left the run deadlocked without the probe: the probe reports it.
 	#[test]
-	fn a_queue_attached_in_a_probe_still_fires() {
+	#[should_panic(expected = "lost wakeup: the root future run at src/clock/sim.rs")]
+	fn the_probe_reports_a_queue_attached_on_its_re_poll() {
 		run_with(0, probing(), async {
 			let deadlines = Deadlines::new(crate::clock::now());
 			let mut deadline = crate::clock::Deadline::after(&deadlines, Duration::from_secs(1));
@@ -1822,7 +1832,6 @@ mod tests {
 				deadline.poll(waiter)
 			})
 			.await;
-			assert_eq!(crate::clock::now(), at(1));
 		});
 	}
 
