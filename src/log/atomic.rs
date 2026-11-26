@@ -39,6 +39,7 @@ impl Usize {
 	/// Which atomic this is, matched against a permission's.
 	pub uninterp spec fn id(&self) -> int;
 
+	#[inline]
 	#[verifier::external_body]
 	pub fn new(value: usize) -> (result: (Self, Tracked<UsizePerm>))
 		ensures
@@ -48,6 +49,7 @@ impl Usize {
 		(Self(atomic::AtomicUsize::new(value)), Tracked::assume_new())
 	}
 
+	#[inline]
 	#[verifier::external_body]
 	#[verifier::atomic]
 	pub fn load(&self, Tracked(perm): Tracked<&UsizePerm>, order: Ordering) -> (value: usize)
@@ -61,6 +63,7 @@ impl Usize {
 		self.0.load(order)
 	}
 
+	#[inline]
 	#[verifier::external_body]
 	#[verifier::atomic]
 	pub fn store(&self, Tracked(perm): Tracked<&mut UsizePerm>, value: usize, order: Ordering)
@@ -99,6 +102,7 @@ impl U64 {
 	/// Which atomic this is, matched against a permission's.
 	pub uninterp spec fn id(&self) -> int;
 
+	#[inline]
 	#[verifier::external_body]
 	pub fn new(value: u64) -> (result: (Self, Tracked<U64Perm>))
 		ensures
@@ -108,6 +112,7 @@ impl U64 {
 		(Self(atomic::AtomicU64::new(value)), Tracked::assume_new())
 	}
 
+	#[inline]
 	#[verifier::external_body]
 	#[verifier::atomic]
 	pub fn load(&self, Tracked(perm): Tracked<&U64Perm>, order: Ordering) -> (value: u64)
@@ -121,6 +126,7 @@ impl U64 {
 		self.0.load(order)
 	}
 
+	#[inline]
 	#[verifier::external_body]
 	#[verifier::atomic]
 	pub fn store(&self, Tracked(perm): Tracked<&mut U64Perm>, value: u64, order: Ordering)
@@ -161,6 +167,7 @@ impl<T> Ptr<T> {
 	/// Which atomic this is, matched against a permission's.
 	pub uninterp spec fn id(&self) -> int;
 
+	#[inline]
 	#[verifier::external_body]
 	pub fn new(value: *mut T) -> (result: (Self, Tracked<PtrPerm<T>>))
 		ensures
@@ -170,6 +177,7 @@ impl<T> Ptr<T> {
 		(Self(atomic::AtomicPtr::new(value)), Tracked::assume_new())
 	}
 
+	#[inline]
 	#[verifier::external_body]
 	#[verifier::atomic]
 	pub fn load(&self, Tracked(perm): Tracked<&PtrPerm<T>>, order: Ordering) -> (value: *mut T)
@@ -183,6 +191,7 @@ impl<T> Ptr<T> {
 		self.0.load(order)
 	}
 
+	#[inline]
 	#[verifier::external_body]
 	#[verifier::atomic]
 	pub fn store(&self, Tracked(perm): Tracked<&mut PtrPerm<T>>, value: *mut T, order: Ordering)
@@ -204,12 +213,14 @@ impl<T> Ptr<T> {
 // Outside the proof: code the proof doesn't cover reaches the atomic directly, and is
 // trusted to keep the log's invariant as the verified code does.
 impl Usize {
+	#[inline]
 	pub fn unverified(&self) -> &atomic::AtomicUsize {
 		&self.0
 	}
 }
 
 impl<T> Ptr<T> {
+	#[inline]
 	pub fn unverified(&self) -> &atomic::AtomicPtr<T> {
 		&self.0
 	}
