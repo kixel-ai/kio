@@ -110,9 +110,8 @@ pub fn wall() -> Wall {
 /// The ambient clock's origin: an instant and its wall time, fixed at the first read.
 ///
 /// It maps instants onto wall time and, unlike [`wall`], does not move after a clock
-/// correction. `@moq/clock`'s `origin()` returns only the wall time of instant zero, in
-/// milliseconds; here [`Wall`] is nanoseconds and comes paired with an instant, since a
-/// runtime clock's instant zero predates 1970.
+/// correction. It is a pair rather than the wall time of instant zero, since a runtime
+/// clock's instant zero predates 1970.
 pub fn origin() -> (Instant, Wall) {
 	#[cfg(feature = "manual")]
 	if let Some(clock) = deadline::installed() {

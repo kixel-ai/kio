@@ -15,10 +15,10 @@ check:
     nixfmt --check flake.nix
     quest check
 
-# Run unit, doc, and trybuild UI tests across the workspace.
+# Run unit, doc, and trybuild UI tests across the workspace, aborting on any host-clock timer.
 test *args:
-    cargo test --locked --workspace {{ args }}
-    cargo test --locked --doc -p kio --all-features
+    KIO_DENY_HOST_TIMERS=1 cargo test --locked --workspace {{ args }}
+    KIO_DENY_HOST_TIMERS=1 cargo test --locked --doc -p kio --all-features
 
 # Run what CI runs: lint, then test.
 ci: check test

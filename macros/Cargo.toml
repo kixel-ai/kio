@@ -25,8 +25,8 @@ proc-macro = true
 [dependencies]
 proc-macro2 = "1"
 quote = "1"
-# syn 2, not 3: moq-net's graph already builds syn 2 with `full` and `visit-mut`
-# (thiserror, tracing), so the macro adds no syn build of its own there.
+# syn 2, not 3: common dependencies such as thiserror and tracing already build
+# syn 2 with `full` and `visit-mut`, so the macro adds no syn build of its own.
 syn = { version = "2", features = ["full", "visit-mut"] }
 
 [dev-dependencies]

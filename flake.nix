@@ -19,7 +19,6 @@
 
   outputs =
     {
-      self,
       nixpkgs,
       flake-utils,
       rust-overlay,
@@ -44,7 +43,6 @@
           quest-cli = quest.packages.${system}.default;
         in
         {
-          packages.quest = quest-cli;
           devShells.default = pkgs.mkShell {
             packages = with pkgs; [
               toolchain
@@ -59,10 +57,6 @@
             ];
           };
           formatter = pkgs.nixfmt;
-          checks.quest-tree = pkgs.runCommand "quest-tree" { nativeBuildInputs = [ quest-cli ]; } ''
-            quest --root ${self} check
-            touch "$out"
-          '';
         }
       );
 }

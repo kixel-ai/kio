@@ -27,17 +27,25 @@ jobs:
           persist-credentials: false
       - id: plan
         run: |
+          # Whether crates.io lacks the version; any answer but found or missing fails the
+          # run, so an outage never passes for "already published".
           check_crate() {
             local name="$1" version="$2"
             local status
             status=$(curl -s -o /dev/null -w '%{http_code}' -A "kixel-ai/kio release" \
               "https://crates.io/api/v1/crates/${name}/${version}")
-            [ "$status" = "404" ] && echo "true" || echo "false"
+            case "$status" in
+              404) echo "true" ;;
+              200) echo "false" ;;
+              *) echo "crates.io answered ${status} for ${name} ${version}" >&2; return 1 ;;
+            esac
           }
           macros_ver=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "kio-macros") | .version')
           kio_ver=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "kio") | .version')
-          echo "macros=$(check_crate kio-macros "$macros_ver")" >> "$GITHUB_OUTPUT"
-          echo "kio=$(check_crate kio "$kio_ver")" >> "$GITHUB_OUTPUT"
+          macros=$(check_crate kio-macros "$macros_ver")
+          kio=$(check_crate kio "$kio_ver")
+          echo "macros=$macros" >> "$GITHUB_OUTPUT"
+          echo "kio=$kio" >> "$GITHUB_OUTPUT"
 
   package:
     needs: plan
@@ -48,9 +56,9 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/nix
-      - run: nix develop --command cargo package --locked -p kio-macros
-      - if: needs.plan.outputs.macros != 'true'
-        run: nix develop --command cargo package --locked -p kio
+      # Packaged together, so kio verifies against the kio-macros it ships with even
+      # before that version reaches crates.io.
+      - run: nix develop --command cargo package --locked -p kio-macros -p kio
 
   publish-macros:
     needs: [plan, package]

@@ -8,6 +8,8 @@ rust-version = "1.91"
 [workspace.lints.clippy]
 # Every suppression says why, so the next lint audit can judge it.
 allow_attributes_without_reason = "warn"
+# `#[expect]` fails once its lint stops firing, so a stale suppression can't linger.
+allow_attributes = "warn"
 
 [workspace.dependencies]
 futures = "0.3"
