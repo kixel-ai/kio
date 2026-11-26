@@ -19,9 +19,9 @@ Run the `deps` audit: `quest audit deps` prints what it checks, what each findin
     replace `cargo shear` in `just check`. On 1.100 it caught an unused
     dependency only in lib-only builds and stayed silent under `--all-targets`,
     so it could not replace cargo-shear yet.
-  - `Counts::join_consumers` (`src/lib.rs`) suppresses the deprecation of
-    `fetch_update`, because its replacement, `try_update`, needs Rust 1.95. Switch
-    once the workspace `rust-version` floor reaches 1.95.
+  - `Counts::join_consumers` (`src/lib.rs`) hand-rolls a `compare_exchange_weak`
+    loop, because `fetch_update` is deprecated and its replacement, `try_update`,
+    needs Rust 1.95. Switch once the workspace `rust-version` floor reaches 1.95.
   - smallvec 2.0 was in beta (2.0.0-beta.5); kio uses 1.x's `union` feature.
   - criterion, which only the benches use, is the last dependency on syn 2.
   - Toolchain bumps change rustc diagnostics, so re-bless
