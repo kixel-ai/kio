@@ -39,6 +39,11 @@
 // Verus, which allows unstable features, sets the cfg.
 #![cfg_attr(verus_keep_ghost, feature(proc_macro_hygiene))]
 
+// Runs the README's example as a doctest, so it keeps building against the API.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct Readme;
+
 use std::{
 	fmt,
 	sync::atomic::{AtomicUsize, Ordering},
