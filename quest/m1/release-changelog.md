@@ -2,7 +2,7 @@
 
 ## Goal
 
-Each release from `kixel-ai/kio`, starting with the first, ships a `CHANGELOG.md` entry for `kio` and `kio-macros` and a version bump that matches its breaking changes, without anyone writing either by hand.
+Each release from `kixel-ai/kio`, starting with the first, ships a `CHANGELOG.md` entry for `kio` and `kio-macros` and a version bump that matches its breaking changes, without anyone writing either by hand. The first release publishes `kio` past the `0.6.4` that `moq-dev/moq`'s `release` branch put on crates.io, so moq can move its `kio` dependency from a git rev back to crates.io (moq's `quest/m2/kio-crates-io.md`) before its next release cut.
 
 ## Plan
 
@@ -14,6 +14,4 @@ Run release-plz in release-PR mode (`release-plz release-pr`), which opens a PR 
 Its first run needs a starting point, since the `kio-v*` tags live in `moq-dev/moq`. Start after this repository's copy of the commit `kio-v0.6.2` was cut from: it is the last release on main's line, while 0.6.3 and 0.6.4 were backports on moq's `release` branch, so everything main changed since 0.6.2 is unreleased. Tagging the extraction commit instead would drop all of it from the first entry. That range also holds the main-side commits that 0.6.3 and 0.6.4 already shipped as backports, such as the contended benchmark; leave those out of the first entry, since `CHANGELOG.md` already lists them.
 The release PR needs a token that can open PRs; keep it out of pull-request workflows.
 
-## Related
-
-- [crates.io publishing](/quest/m1/crates-io-publish.md) - the first release this writes the entry and bump for
+Publishing already works: crates.io trusts `kixel-ai/kio`'s `release.yml` in the `crates-io` environment for both `kio` and `kio-macros` (the `moq-dev/moq` publisher on `kio` was removed), and `release.yml` published `kio-macros` `0.1.0` on 2026-11-26 after a `0.0.0` placeholder reserved the name. `kio` on main is still `0.6.2`, which crates.io already holds, so `release.yml` skips it until this quest's first release PR bumps it.

@@ -21,4 +21,4 @@ Checked and kept: public items this repository never calls have callers in `moq-
 
 ## Related
 
-- [crates.io publishing](/quest/m1/crates-io-publish.md) - the first release from this repository, which these breaking changes should ride
+- [Release changelog](/quest/m1/release-changelog.md) - the first release from this repository, which these breaking changes should ride
