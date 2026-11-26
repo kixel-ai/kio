@@ -857,7 +857,9 @@ mod tests {
 		println!();
 		println!("| bug | probe | method | data seeds caught / {DATA} | median runs to catch | ms total |");
 		println!("|---|---|---|---|---|---|");
-		for (bug, probe) in [(Bug::StealCredit, false)] {
+		// The ordering bug: the lost wakeups fall to the first run of every method.
+		{
+			let (bug, probe) = (Bug::StealCredit, false);
 			let fixture = Fixture {
 				bug: Some(bug),
 				..Fixture::SMALL

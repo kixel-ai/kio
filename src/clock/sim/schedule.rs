@@ -169,11 +169,11 @@ impl Scheduler {
 		matches!(self.policy, Policy::Fifo)
 	}
 
-	/// A new unit's priority.
-	pub fn priority(&mut self) -> Priority {
+	/// A new unit's priority, under `pct`, the one policy that ranks units.
+	pub fn priority(&mut self) -> Option<Priority> {
 		match self.policy {
-			Policy::Pct { depth, .. } => Priority::from(depth) + Priority::from(self.rng.random::<u32>()),
-			_ => 0,
+			Policy::Pct { depth, .. } => Some(Priority::from(depth) + Priority::from(self.rng.random::<u32>())),
+			_ => None,
 		}
 	}
 
@@ -269,13 +269,13 @@ mod tests {
 	#[test]
 	fn pct_change_points_and_yields_demote() {
 		let mut scheduler = Scheduler::new(Policy::Pct { depth: 2, steps: 1 }, 7);
-		let mut first = scheduler.priority();
-		let second = scheduler.priority();
+		let mut first = scheduler.priority().unwrap();
+		let second = scheduler.priority().unwrap();
 		assert!(first >= 2 && second >= 2);
 		// The one change point is at step 0, so the first step lands on it.
 		scheduler.ran(&mut first, false);
 		assert_eq!(first, 1);
-		let mut third = scheduler.priority();
+		let mut third = scheduler.priority().unwrap();
 		scheduler.ran(&mut third, true);
 		assert!(third < first, "a yield goes below the change point");
 	}

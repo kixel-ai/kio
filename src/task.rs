@@ -109,6 +109,9 @@ pub struct Tasks<T> {
 	next: usize,
 	/// Stamped on each occupant, so a [`TaskKey`] outliving its task names nothing.
 	generation: u64,
+	/// Parallel to `children`.
+	#[cfg(feature = "sim")]
+	sim: Vec<Sim>,
 }
 
 /// Names a task [`insert`](Tasks::insert)ed into a set, until it finishes or is
@@ -125,12 +128,17 @@ struct Occupant<T> {
 	task: T,
 	park: Park,
 	generation: u64,
-	/// Its rank when the simulator schedules children.
-	#[cfg(feature = "sim")]
-	priority: crate::clock::sim::Priority,
+}
+
+/// What the simulator keeps for a slot's occupant, apart from the slab so a push in a
+/// build with `sim` stays cheap.
+#[cfg(feature = "sim")]
+struct Sim {
 	/// Where it was pushed, to blame it for a lost wakeup.
-	#[cfg(feature = "sim")]
 	location: &'static std::panic::Location<'static>,
+	/// Its rank when the simulator schedules children by priority, drawn at its first
+	/// scheduled pass.
+	priority: Option<crate::clock::sim::Priority>,
 }
 
 /// Waker state shared with every slot; deliberately `T`-free so the wakers
@@ -328,6 +336,8 @@ impl<T> Tasks<T> {
 			scratch: Vec::new(),
 			next: 0,
 			generation: 0,
+			#[cfg(feature = "sim")]
+			sim: Vec::new(),
 		}
 	}
 
@@ -380,11 +390,18 @@ impl<T> Tasks<T> {
 			task,
 			park: Park::default(),
 			generation: self.generation,
-			#[cfg(feature = "sim")]
-			priority: crate::clock::sim::child_priority(),
-			#[cfg(feature = "sim")]
-			location: std::panic::Location::caller(),
 		});
+		#[cfg(feature = "sim")]
+		{
+			let sim = Sim {
+				location: std::panic::Location::caller(),
+				priority: None,
+			};
+			match self.sim.get_mut(index) {
+				Some(slot) => *slot = sim,
+				None => self.sim.push(sim),
+			}
+		}
 		self.len += 1;
 		// Queue the first poll exactly the way any wake would.
 		self.wakers[index].wake_by_ref();
@@ -649,15 +666,18 @@ impl<T: Task> Tasks<T> {
 		// A stale bit names a slot whose occupant already finished.
 		woken.retain(|&index| matches!(self.children.get(index), Some(Some(_))));
 
+		for &index in &woken {
+			let sim = &mut self.sim[index];
+			if sim.priority.is_none() {
+				sim.priority = children.priority();
+			}
+		}
+
 		let mut priorities = Vec::with_capacity(woken.len());
 		let mut ran = false;
 		while !woken.is_empty() {
 			priorities.clear();
-			priorities.extend(
-				woken
-					.iter()
-					.map(|&index| self.children[index].as_ref().expect("woken slot is occupied").priority),
-			);
+			priorities.extend(woken.iter().map(|&index| self.sim[index].priority.unwrap_or(0)));
 			let Some(pick) = children.pick(&priorities, ran) else {
 				for index in woken {
 					self.wakers[index].wake_by_ref();
@@ -676,7 +696,7 @@ impl<T: Task> Tasks<T> {
 				occupant.task.poll(child_waiter)
 			};
 			if children.probing() && (poll.is_ready() || children.events() != events) {
-				children.blame(occupant.location, index);
+				children.blame(self.sim[index].location, index);
 			}
 			match poll {
 				Poll::Ready(output) => {
@@ -688,7 +708,9 @@ impl<T: Task> Tasks<T> {
 				Poll::Pending => {
 					let word = &self.chunks[index / CHUNK_SLOTS].words[(index % CHUNK_SLOTS) / WORD_BITS];
 					let yielded = word.load(Ordering::Acquire) & (1 << (index % WORD_BITS)) != 0;
-					children.ran(&mut occupant.priority, yielded);
+					if let Some(priority) = &mut self.sim[index].priority {
+						children.ran(priority, yielded);
+					}
 				}
 			}
 		}

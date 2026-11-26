@@ -31,7 +31,7 @@
 
 use std::{
 	cell::{Cell, RefCell},
-	collections::{BTreeMap, BTreeSet, VecDeque},
+	collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
 	future::{Future, IntoFuture},
 	panic::Location,
 	pin::{Pin, pin},
@@ -64,11 +64,14 @@ thread_local! {
 	static EVENTS: Cell<u64> = const { Cell::new(0) };
 	/// Set while a probe re-polls parked tasks, so a task set polls every child.
 	static PROBING: Cell<bool> = const { Cell::new(false) };
+	/// Set while the thread runs a schedule other than FIFO, which orders task set children.
+	static SCHEDULING: Cell<bool> = const { Cell::new(false) };
 	/// The first child a probe saw make progress, with where it was pushed.
 	static BLAMED: Cell<Option<(&'static Location<'static>, usize)>> = const { Cell::new(None) };
 }
 
 /// Count an event a probe watches for.
+#[inline]
 pub(crate) fn event() {
 	// A wake from a thread-local's destructor counts nothing.
 	let _ = EVENTS.try_with(|events| events.set(events.get().wrapping_add(1)));
@@ -145,6 +148,7 @@ impl Runtime {
 			assert!(current.is_none(), "kio::clock::sim::run cannot nest");
 			*current = Some(runtime.clone());
 		});
+		SCHEDULING.set(!runtime.schedule.borrow().is_fifo());
 		runtime
 	}
 
@@ -367,6 +371,7 @@ struct Enter {
 impl Drop for Enter {
 	fn drop(&mut self) {
 		CURRENT.with(|current| current.borrow_mut().take());
+		SCHEDULING.set(false);
 		if let Some(replay) = &self.replay
 			&& std::thread::panicking()
 		{
@@ -449,7 +454,7 @@ struct Root<'a> {
 
 impl Root<'_> {
 	/// Poll task `id`, returning whether it finished and whether it woke itself.
-	fn poll(&mut self, spawned: &mut BTreeMap<usize, Spawned>, id: usize) -> (bool, bool) {
+	fn poll(&mut self, spawned: &mut HashMap<usize, Spawned>, id: usize) -> (bool, bool) {
 		if id == ROOT {
 			self.queue.queued.store(false, Ordering::Release);
 			let done = poll(self.future.as_mut(), &mut Context::from_waker(&self.waker)).is_ready();
@@ -475,12 +480,14 @@ fn run_inner(runtime: &Runtime, future: Pin<&mut dyn Future<Output = ()>>, locat
 		queue,
 		location,
 	};
-	let mut spawned = BTreeMap::new();
+	let mut spawned = HashMap::new();
 	// Tasks that woke themselves while they ran.
 	let mut yielded = BTreeSet::new();
 	let mut weights = Vec::new();
-	let priority = runtime.schedule.borrow_mut().priority();
-	runtime.priorities.borrow_mut().insert(ROOT, priority);
+	let fifo = runtime.schedule.borrow().is_fifo();
+	if let Some(priority) = runtime.schedule.borrow_mut().priority() {
+		runtime.priorities.borrow_mut().insert(ROOT, priority);
+	}
 	root.waker.wake_by_ref();
 
 	loop {
@@ -489,26 +496,36 @@ fn run_inner(runtime: &Runtime, future: Pin<&mut dyn Future<Output = ()>>, locat
 
 		let picked = {
 			let mut ready = runtime.ready.0.lock().unwrap();
-			// A finished task's waker may still fire; it names nothing to run.
-			ready.retain(|id| *id == ROOT || spawned.contains_key(id));
-			// A task that yielded waits for every task queued ahead of it, as `yield_now`
-			// promises, whatever the schedule.
-			let eligible = match ready.iter().position(|id| yielded.contains(id)) {
-				Some(0) => {
-					yielded.remove(&ready[0]);
-					1
-				}
-				Some(at) => at,
-				None => ready.len(),
-			};
-			let priorities = runtime.priorities.borrow();
-			weights.clear();
-			weights.extend(ready.iter().take(eligible).map(|id| priorities[id]));
-			match weights.is_empty() {
-				true => None,
+			match fifo {
+				// A finished task's waker may still fire; it names nothing to run.
+				true => std::iter::from_fn(|| ready.pop_front()).find(|id| *id == ROOT || spawned.contains_key(id)),
 				false => {
-					let index = runtime.schedule.borrow_mut().pick(&weights);
-					ready.remove(index)
+					ready.retain(|id| *id == ROOT || spawned.contains_key(id));
+					// A task that yielded waits for every task queued ahead of it, as
+					// `yield_now` promises, whatever the schedule.
+					let eligible = match ready.iter().position(|id| yielded.contains(id)) {
+						Some(0) => {
+							yielded.remove(&ready[0]);
+							1
+						}
+						Some(at) => at,
+						None => ready.len(),
+					};
+					let priorities = runtime.priorities.borrow();
+					weights.clear();
+					weights.extend(
+						ready
+							.iter()
+							.take(eligible)
+							.map(|id| priorities.get(id).copied().unwrap_or(0)),
+					);
+					match weights.is_empty() {
+						true => None,
+						false => {
+							let index = runtime.schedule.borrow_mut().pick(&weights);
+							ready.remove(index)
+						}
+					}
 				}
 			}
 		};
@@ -526,9 +543,10 @@ fn run_inner(runtime: &Runtime, future: Pin<&mut dyn Future<Output = ()>>, locat
 				if woke {
 					yielded.insert(id);
 				}
-				let mut priorities = runtime.priorities.borrow_mut();
-				let priority = priorities.get_mut(&id).expect("a live task");
-				runtime.schedule.borrow_mut().ran(priority, woke);
+				// Only `pct` ranks tasks, and only it counts their steps.
+				if let Some(priority) = runtime.priorities.borrow_mut().get_mut(&id) {
+					runtime.schedule.borrow_mut().ran(priority, woke);
+				}
 			}
 			continue;
 		}
@@ -561,7 +579,7 @@ fn run_inner(runtime: &Runtime, future: Pin<&mut dyn Future<Output = ()>>, locat
 /// woke it, so without the probe it would sleep through the change it missed.
 ///
 /// A task set polls every child while probing, and blames the first that progresses.
-fn probe(runtime: &Runtime, root: &mut Root<'_>, spawned: &mut BTreeMap<usize, Spawned>) {
+fn probe(runtime: &Runtime, root: &mut Root<'_>, spawned: &mut HashMap<usize, Spawned>) {
 	struct Probing;
 	impl Drop for Probing {
 		fn drop(&mut self) {
@@ -572,7 +590,8 @@ fn probe(runtime: &Runtime, root: &mut Root<'_>, spawned: &mut BTreeMap<usize, S
 	PROBING.set(true);
 	let _probing = Probing;
 
-	let ids: Vec<usize> = std::iter::once(ROOT).chain(spawned.keys().copied()).collect();
+	let mut ids: Vec<usize> = std::iter::once(ROOT).chain(spawned.keys().copied()).collect();
+	ids.sort_unstable();
 	for id in ids {
 		let before = events();
 		BLAMED.set(None);
@@ -602,21 +621,25 @@ pub(crate) struct Children {
 
 /// The current run's say over a task set's pass, or `None` where the set keeps its own
 /// slot order: outside a run, and in a FIFO run that is not probing.
+#[inline]
 pub(crate) fn children() -> Option<Children> {
+	// Two flags, so a pass outside a scheduling run costs no runtime lookup.
 	let probing = PROBING.get();
-	let runtime = current()?;
-	if !probing && runtime.schedule.borrow().is_fifo() {
+	if !probing && !SCHEDULING.get() {
 		return None;
 	}
-	Some(Children { runtime, probing })
-}
-
-/// A new child's priority: drawn from the current run's schedule, or 0 outside one.
-pub(crate) fn child_priority() -> Priority {
-	current().map_or(0, |runtime| runtime.schedule.borrow_mut().priority())
+	Some(Children {
+		runtime: current()?,
+		probing,
+	})
 }
 
 impl Children {
+	/// A child's priority, under a schedule that ranks them.
+	pub(crate) fn priority(&self) -> Option<Priority> {
+		self.runtime.schedule.borrow_mut().priority()
+	}
+
 	/// Whether the pass polls every child for a probe.
 	pub(crate) fn probing(&self) -> bool {
 		self.probing
@@ -984,8 +1007,9 @@ where
 	});
 	let id = runtime.next.get();
 	runtime.next.set(id + 1);
-	let priority = runtime.schedule.borrow_mut().priority();
-	runtime.priorities.borrow_mut().insert(id, priority);
+	if let Some(priority) = runtime.schedule.borrow_mut().priority() {
+		runtime.priorities.borrow_mut().insert(id, priority);
+	}
 	let queue = TaskWaker::new(id, &runtime.ready);
 	let task = Spawned {
 		task: Box::pin(task),
