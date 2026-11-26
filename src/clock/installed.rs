@@ -347,6 +347,34 @@ mod tests {
 		assert_eq!(installed.block_on(async { crate::clock::now() }), Instant::ZERO);
 	}
 
+	/// A queue made on the runtime keeps reading that clock's wall time and origin when
+	/// entered on a thread outside it, and a capture there is that clock.
+	#[test]
+	fn an_entered_queue_keeps_the_installed_clock() {
+		let runtime = runtime(false);
+		let clock = Manual::new().install(runtime.handle());
+		let (deadlines, captured) = runtime.block_on(async {
+			(
+				crate::clock::Deadlines::new(crate::clock::now()),
+				crate::clock::Clock::current(),
+			)
+		});
+		clock.advance(Duration::from_secs(5));
+		let five = Instant::ZERO.saturating_add(Duration::from_secs(5));
+		std::thread::scope(|scope| {
+			scope.spawn(|| {
+				let _entered = deadlines.enter();
+				assert_eq!(crate::clock::now(), Instant::ZERO, "the queue moves only as advanced");
+				assert_eq!(crate::clock::wall(), Manual::WALL_START + Duration::from_secs(5));
+				assert_eq!(
+					crate::clock::origin(),
+					(five, Manual::WALL_START + Duration::from_secs(5))
+				);
+				assert_eq!(crate::clock::Clock::current(), captured);
+			});
+		});
+	}
+
 	/// An advance past the range is refused whole, leaving the clock where it was.
 	#[test]
 	fn advance_past_the_range_changes_nothing() {

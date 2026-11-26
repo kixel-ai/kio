@@ -928,6 +928,25 @@ mod tests {
 		assert_eq!(crate::clock::wall(), Manual::WALL_START + Duration::from_secs(5));
 	}
 
+	/// The origin is fixed at its first read: a wall step or drift moves the wall time,
+	/// never the origin.
+	#[crate::test]
+	async fn the_origin_holds_through_wall_corrections() {
+		advance(Duration::from_secs(10)).await;
+		let origin = crate::clock::origin();
+		assert_eq!(origin, (at(10), Manual::WALL_START + Duration::from_secs(10)));
+
+		step_wall(Manual::WALL_START);
+		set_drift(1_000);
+		advance(Duration::from_secs(1)).await;
+		assert_eq!(
+			crate::clock::wall(),
+			Manual::WALL_START + Duration::from_millis(1_001),
+			"the drift skews the wall time"
+		);
+		assert_eq!(crate::clock::origin(), origin);
+	}
+
 	#[crate::test]
 	async fn cancellation() {
 		let fired = Rc::new(Cell::new(false));
@@ -1253,7 +1272,42 @@ mod tests {
 		assert_eq!(polls, [at(0), at(1), at(3)]);
 	}
 
-	/// Draws across awaits and spawned tasks, so replay covers the run's whole schedule.
+	/// A poll asking for no instant drops the timer it armed before and waits only on a wake.
+	#[crate::test]
+	async fn drive_waits_only_on_a_wake_when_no_instant_is_asked() {
+		let producer = crate::Producer::new(0usize);
+		let consumer = producer.consume();
+		let writer = spawn(async move {
+			for value in [1, 2] {
+				crate::clock::sleep(Duration::from_secs(value as u64 * 2 - 1)).await;
+				*producer.write().ok().expect("open") = value;
+			}
+		});
+
+		let mut polls = Vec::new();
+		let err = crate::clock::drive(|now, waiter| {
+			polls.push(now);
+			let wanted = polls.len();
+			let _ = consumer.poll(waiter, |value| {
+				if **value >= wanted {
+					Poll::Ready(())
+				} else {
+					Poll::Pending
+				}
+			});
+			match wanted {
+				1 => Ok(Some(at(2))),
+				2 => Ok(None),
+				_ => Err("done"),
+			}
+		})
+		.await;
+		assert_eq!(err, "done");
+		assert_eq!(polls, [at(0), at(1), at(4)], "the dropped timer still fired at 2");
+		writer.await.unwrap();
+	}
+
+	/// Draws of every kind across awaits and spawned tasks, so replay covers the run's whole schedule.
 	async fn draws() -> (u64, Vec<u64>) {
 		use rand::Rng as _;
 		let task = spawn(async {
@@ -1262,9 +1316,12 @@ mod tests {
 		});
 		let first = crate::clock::rng().next_u64();
 		let second = task.await.unwrap();
+		let mut rng = crate::clock::rng();
+		let mut bytes = [0; 8];
+		rng.fill_bytes(&mut bytes);
 		(
 			crate::clock::seed(),
-			vec![first, second, crate::clock::rng().next_u64()],
+			vec![first, second, rng.next_u32().into(), u64::from_le_bytes(bytes)],
 		)
 	}
 

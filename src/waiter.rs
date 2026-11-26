@@ -821,6 +821,35 @@ mod tests {
 		}
 	}
 
+	/// A park that lost count of its lists is kept once every list let go, and starts
+	/// its records over, so the lists it parks on next stay idempotent.
+	#[test]
+	fn an_overflowed_park_starts_over_once_its_lists_let_go() {
+		let waker = Waker::noop().clone();
+		let cx = Context::from_waker(&waker);
+		let mut park = Park::default();
+		let first = park.hold(&cx).shared().clone();
+		{
+			let waiter = park.hold(&cx);
+			let mut lists: Vec<_> = (0..=PARKED).map(|_| WaiterList::new()).collect();
+			for list in &mut lists {
+				waiter.register(list);
+			}
+		}
+
+		let waiter = park.hold(&cx);
+		assert!(Arc::ptr_eq(&first, waiter.shared()), "retired a waiter no list holds");
+		let mut lists: Vec<_> = (0..PARKED).map(|_| WaiterList::new()).collect();
+		for _ in 0..3 {
+			for list in &mut lists {
+				waiter.register(list);
+			}
+		}
+		for list in &lists {
+			assert_eq!(list.entries.len(), 1, "a stale record stacked a duplicate");
+		}
+	}
+
 	/// The tag moves with the list, so a list that moved still recognizes its waiter.
 	#[test]
 	fn a_moved_list_still_holds_its_waiter() {
