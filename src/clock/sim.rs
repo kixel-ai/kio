@@ -344,6 +344,8 @@ struct TaskWaker {
 	id: usize,
 	/// Set while the task is on the list, so a burst of wakes queues it once.
 	queued: AtomicBool,
+	/// Set once the task finished, so a stale wake neither queues it nor counts as progress.
+	retired: AtomicBool,
 	ready: Arc<Ready>,
 }
 
@@ -352,6 +354,7 @@ impl TaskWaker {
 		Arc::new(Self {
 			id,
 			queued: AtomicBool::new(false),
+			retired: AtomicBool::new(false),
 			ready: ready.clone(),
 		})
 	}
@@ -363,6 +366,9 @@ impl Wake for TaskWaker {
 	}
 
 	fn wake_by_ref(self: &Arc<Self>) {
+		if self.retired.load(Ordering::Acquire) {
+			return;
+		}
 		event();
 		if !self.queued.swap(true, Ordering::AcqRel) {
 			self.ready.0.lock().unwrap().push_back(self.id);
@@ -560,7 +566,9 @@ fn run_inner(runtime: &Runtime, future: Pin<&mut dyn Future<Output = ()>>, locat
 			}
 			// Only `pct` ranks tasks, and only it counts their steps, finishing ones included.
 			if done {
-				spawned.remove(&id);
+				if let Some(task) = spawned.remove(&id) {
+					task.queue.retired.store(true, Ordering::Release);
+				}
 				yielded.remove(&id);
 				if let Some(mut priority) = runtime.priorities.borrow_mut().remove(&id) {
 					runtime.schedule.borrow_mut().ran(&mut priority, false);
@@ -585,12 +593,14 @@ fn run_inner(runtime: &Runtime, future: Pin<&mut dyn Future<Output = ()>>, locat
 
 		// Bring queues to the current instant before deciding to stall: one attached
 		// behind the clock may wake a task without time moving.
-		let queued = runtime.advance_queues();
+		let mut queued = runtime.advance_queues();
 		if !runtime.ready.is_empty() || !runtime.spawned.borrow().is_empty() {
 			continue;
 		}
 		if runtime.probe {
 			probe(runtime, &mut root, &mut spawned);
+			// A probed task may have attached a queue, which wakes nothing.
+			queued = runtime.advance_queues();
 		}
 		if runtime.advance(queued) {
 			continue;
@@ -688,14 +698,20 @@ impl Children {
 	/// one where a child `yielded` stops early only under a schedule that demotes it.
 	pub(crate) fn pick(&self, woken: &[Priority], ran: bool, yielded: bool) -> Option<usize> {
 		let other = {
-			let running = self.runtime.running.get();
-			let ready = self.runtime.ready.0.lock().unwrap();
 			let priorities = self.runtime.priorities.borrow();
-			ready
-				.iter()
-				.filter(|&&id| id != running)
-				.filter_map(|id| priorities.get(id).copied())
-				.max()
+			// Only a schedule that ranks tasks gives the scan anything to find.
+			match priorities.is_empty() {
+				true => None,
+				false => {
+					let running = self.runtime.running.get();
+					let ready = self.runtime.ready.0.lock().unwrap();
+					ready
+						.iter()
+						.filter(|&&id| id != running)
+						.filter_map(|id| priorities.get(id).copied())
+						.max()
+				}
+			}
 		};
 		self.runtime
 			.schedule
@@ -1768,6 +1784,48 @@ mod tests {
 		});
 	}
 
+	/// A wake of a finished task names nothing to run, so the probe does not count it.
+	#[test]
+	fn the_probe_ignores_a_finished_task_wake() {
+		run_with(0, probing(), async {
+			let stale: Rc<RefCell<Option<std::task::Waker>>> = Rc::default();
+			spawn({
+				let stale = stale.clone();
+				std::future::poll_fn(move |cx| {
+					*stale.borrow_mut() = Some(cx.waker().clone());
+					Poll::Ready(())
+				})
+			})
+			.await
+			.unwrap();
+			let mut sleep = Box::pin(crate::clock::sleep(Duration::from_secs(1)));
+			crate::wait(|waiter| {
+				stale.borrow().iter().for_each(std::task::Waker::wake_by_ref);
+				waiter.poll_future(sleep.as_mut())
+			})
+			.await;
+		});
+	}
+
+	/// A queue a probed task attaches still fires its armed deadline.
+	#[test]
+	fn a_queue_attached_in_a_probe_still_fires() {
+		run_with(0, probing(), async {
+			let deadlines = Deadlines::new(crate::clock::now());
+			let mut deadline = crate::clock::Deadline::after(&deadlines, Duration::from_secs(1));
+			let mut polls = 0;
+			crate::wait(|waiter| {
+				polls += 1;
+				if polls == 2 {
+					attach(&deadlines);
+				}
+				deadline.poll(waiter)
+			})
+			.await;
+			assert_eq!(crate::clock::now(), at(1));
+		});
+	}
+
 	/// A budget spent on the poll that parked the task does not wake it when probed.
 	#[test]
 	fn the_probe_ignores_a_spent_budget() {
@@ -2040,38 +2098,41 @@ mod tests {
 	}
 
 	/// A poll asking for no instant drops the timer it armed before and waits only on a wake.
-	#[crate::test]
-	async fn drive_waits_only_on_a_wake_when_no_instant_is_asked() {
-		let producer = crate::Producer::new(0usize);
-		let consumer = producer.consume();
-		let writer = spawn(async move {
-			for value in [1, 2] {
-				crate::clock::sleep(Duration::from_secs(value as u64 * 2 - 1)).await;
-				*producer.write().ok().expect("open") = value;
-			}
-		});
-
-		let mut polls = Vec::new();
-		let err = crate::clock::drive(|now, waiter| {
-			polls.push(now);
-			let wanted = polls.len();
-			let _ = consumer.poll(waiter, |value| {
-				if **value >= wanted {
-					Poll::Ready(())
-				} else {
-					Poll::Pending
+	/// It counts polls, so it pins FIFO without the probe.
+	#[test]
+	fn drive_waits_only_on_a_wake_when_no_instant_is_asked() {
+		fifo(async {
+			let producer = crate::Producer::new(0usize);
+			let consumer = producer.consume();
+			let writer = spawn(async move {
+				for value in [1, 2] {
+					crate::clock::sleep(Duration::from_secs(value as u64 * 2 - 1)).await;
+					*producer.write().ok().expect("open") = value;
 				}
 			});
-			match wanted {
-				1 => Ok(Some(at(2))),
-				2 => Ok(None),
-				_ => Err("done"),
-			}
-		})
-		.await;
-		assert_eq!(err, "done");
-		assert_eq!(polls, [at(0), at(1), at(4)], "the dropped timer still fired at 2");
-		writer.await.unwrap();
+
+			let mut polls = Vec::new();
+			let err = crate::clock::drive(|now, waiter| {
+				polls.push(now);
+				let wanted = polls.len();
+				let _ = consumer.poll(waiter, |value| {
+					if **value >= wanted {
+						Poll::Ready(())
+					} else {
+						Poll::Pending
+					}
+				});
+				match wanted {
+					1 => Ok(Some(at(2))),
+					2 => Ok(None),
+					_ => Err("done"),
+				}
+			})
+			.await;
+			assert_eq!(err, "done");
+			assert_eq!(polls, [at(0), at(1), at(4)], "the dropped timer still fired at 2");
+			writer.await.unwrap();
+		});
 	}
 
 	/// Draws of every kind across awaits and spawned tasks, so replay covers the run's whole schedule.

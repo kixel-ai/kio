@@ -307,9 +307,9 @@ impl Wake for SlotWaker {
 		#[cfg(feature = "sim")]
 		{
 			crate::clock::sim::event();
-			// Relaxed: the poll that reads it runs on this thread, and a wake from
-			// another thread mid-poll is no yield to detect.
-			if self.shared.polling.load(Ordering::Relaxed) == self.slot {
+			// Relaxed, and only on a thread polling a simulated task: a wake from a
+			// worker thread mid-poll is no yield to detect.
+			if self.shared.polling.load(Ordering::Relaxed) == self.slot && crate::coop::polling() {
 				self.shared.self_woke.store(true, Ordering::Relaxed);
 			}
 		}
@@ -1590,6 +1590,29 @@ mod tests {
 				assert_eq!(done.get(), 1);
 			})
 			.await;
+	}
+
+	/// Under `pct`, a child another thread wakes while it runs keeps its rank: only its
+	/// own wake is a yield.
+	#[cfg(feature = "sim")]
+	#[test]
+	fn a_worker_thread_wake_is_not_a_yield() {
+		crate::clock::sim::run_pct(async {
+			let mut tasks = Tasks::new();
+			tasks.push(|waiter: &Waiter| {
+				let waker = waiter.waker().clone();
+				std::thread::spawn(move || waker.wake()).join().unwrap();
+				Poll::Pending
+			});
+			// One pass.
+			crate::wait(|waiter| {
+				assert!(tasks.poll(waiter).is_pending());
+				Poll::Ready(())
+			})
+			.await;
+			let (_, priority) = tasks.sim[0].priority.expect("drawn at the first pass");
+			assert!(priority >= 1, "demoted to {priority}");
+		});
 	}
 
 	/// Under `pct`, a child a sibling woke earlier in the same pass keeps its rank when it

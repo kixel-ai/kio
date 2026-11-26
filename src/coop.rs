@@ -43,6 +43,13 @@ pub(crate) fn child() -> impl Drop {
 	Reset(READY.replace(READY.get().map(|_| 0)))
 }
 
+/// Whether this thread is inside a counting scope: polling a simulated task.
+#[cfg(feature = "sim")]
+pub(crate) fn polling() -> bool {
+	// A wake from a thread-local's destructor is no poll's.
+	READY.try_with(|count| count.get().is_some()).unwrap_or(false)
+}
+
 #[inline]
 #[cfg_attr(feature = "sim", track_caller)]
 pub(crate) fn ready<T>(value: T) -> Poll<T> {
