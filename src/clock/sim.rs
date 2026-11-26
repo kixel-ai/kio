@@ -24,7 +24,6 @@
 
 use std::{
 	cell::{Cell, RefCell},
-	collections::BTreeMap,
 	future::{Future, IntoFuture},
 	pin::{Pin, pin},
 	rc::Rc,
@@ -39,7 +38,11 @@ use std::{
 use futures::{FutureExt, StreamExt, stream::FuturesUnordered};
 use rand::SeedableRng;
 
-use crate::clock::{Deadlines, Instant, Manual, Wall, deadline::WeakDeadlines};
+use crate::clock::{
+	Deadlines, Instant, Manual, Wall,
+	deadline::WeakDeadlines,
+	manual::{Key, Timers},
+};
 
 thread_local! {
 	static CURRENT: RefCell<Option<Rc<Runtime>>> = const { RefCell::new(None) };
@@ -57,7 +60,7 @@ struct Runtime {
 	id: u64,
 	/// Spawned since the run loop last collected them.
 	spawned: RefCell<Vec<Task>>,
-	time: RefCell<Time>,
+	time: RefCell<Timers>,
 	/// Queues kept in step with simulated time, until their owners drop them.
 	queues: RefCell<Vec<WeakDeadlines>>,
 	/// Awaiting [`idle`]: each flag is raised, and its waker woken, once nothing else can run.
@@ -66,26 +69,13 @@ struct Runtime {
 	rng: RefCell<rand::rngs::StdRng>,
 }
 
-struct Time {
-	clock: Manual,
-	anchor: Option<(Instant, Wall)>,
-	/// Orders timers armed for the same instant by when they were armed.
-	next: u64,
-	timers: BTreeMap<(Instant, u64), Waker>,
-}
-
 impl Runtime {
 	fn enter(seed: u64) -> Rc<Self> {
 		static RUNS: AtomicU64 = AtomicU64::new(0);
 		let runtime = Rc::new(Runtime {
 			id: RUNS.fetch_add(1, Ordering::Relaxed),
 			spawned: RefCell::new(Vec::new()),
-			time: RefCell::new(Time {
-				clock: Manual::new(),
-				anchor: None,
-				next: 0,
-				timers: BTreeMap::new(),
-			}),
+			time: RefCell::new(Timers::new(Manual::new())),
 			queues: RefCell::new(Vec::new()),
 			idle: RefCell::new(Vec::new()),
 			seed,
@@ -104,7 +94,7 @@ impl Runtime {
 		// Timers and idle waiters may hold wakers into the dropped tasks.
 		self.queues.borrow_mut().clear();
 		self.idle.borrow_mut().clear();
-		self.time.borrow_mut().timers.clear();
+		self.time.borrow_mut().clear();
 	}
 
 	fn now(&self) -> Instant {
@@ -115,17 +105,8 @@ impl Runtime {
 	fn advance_to(&self, at: Instant) {
 		let due = {
 			let mut time = self.time.borrow_mut();
-			let now = time.clock.now();
-			time.clock.advance(at.saturating_duration_since(now));
-			let now = time.clock.now();
-			let mut due = Vec::new();
-			while let Some(entry) = time.timers.first_entry() {
-				if entry.key().0 > now {
-					break;
-				}
-				due.push(entry.remove());
-			}
-			due
+			let passed = at.saturating_duration_since(time.clock.now());
+			time.advance(passed)
 		};
 		due.into_iter().for_each(Waker::wake);
 		self.advance_queues();
@@ -154,7 +135,7 @@ impl Runtime {
 	/// Jump to the earliest armed timer or `queued`, the queues' earliest deadline.
 	/// False when nothing is armed.
 	fn advance(&self, queued: Option<Instant>) -> bool {
-		let timer = self.time.borrow().timers.first_key_value().map(|((at, _), _)| *at);
+		let timer = self.time.borrow().next();
 		match timer.into_iter().chain(queued).min() {
 			Some(at) => {
 				self.advance_to(at);
@@ -184,15 +165,7 @@ pub(crate) fn wall() -> Option<Wall> {
 }
 
 pub(crate) fn anchor() -> Option<(Instant, Wall)> {
-	current().map(|runtime| {
-		let mut time = runtime.time.borrow_mut();
-		if let Some(anchor) = time.anchor {
-			return anchor;
-		}
-		let anchor = (time.clock.now(), time.clock.wall());
-		time.anchor = Some(anchor);
-		anchor
-	})
+	current().map(|runtime| runtime.time.borrow_mut().anchor())
 }
 
 /// The run's seed, when the calling thread is inside [`run`].
@@ -471,7 +444,7 @@ pub fn yield_now() -> impl Future<Output = ()> {
 pub(crate) struct Timer {
 	run: u64,
 	at: Instant,
-	key: Option<(Instant, u64)>,
+	key: Option<Key>,
 }
 
 impl Timer {
@@ -507,27 +480,14 @@ impl Timer {
 	fn disarm(&mut self) -> Option<Waker> {
 		// A run that already ended cleared its timers.
 		let key = self.key.take()?;
-		self.runtime()?.time.borrow_mut().timers.remove(&key)
+		self.runtime()?.time.borrow_mut().disarm(key)
 	}
 
 	pub(crate) fn poll(&mut self, cx: &mut Context<'_>) -> Poll<()> {
 		let runtime = self
 			.runtime()
 			.expect("a simulated sleep polled outside its kio::clock::sim::run");
-		let mut time = runtime.time.borrow_mut();
-		if time.clock.now() >= self.at {
-			if let Some(key) = self.key.take() {
-				time.timers.remove(&key);
-			}
-			return Poll::Ready(());
-		}
-		let key = *self.key.get_or_insert_with(|| {
-			let id = time.next;
-			time.next += 1;
-			(self.at, id)
-		});
-		time.timers.insert(key, cx.waker().clone());
-		Poll::Pending
+		runtime.time.borrow_mut().poll(self.at, &mut self.key, cx.waker())
 	}
 }
 
@@ -968,6 +928,25 @@ mod tests {
 		assert_eq!(crate::clock::wall(), Manual::WALL_START + Duration::from_secs(5));
 	}
 
+	/// The origin is fixed at its first read: a wall step or drift moves the wall time,
+	/// never the origin.
+	#[crate::test]
+	async fn the_origin_holds_through_wall_corrections() {
+		advance(Duration::from_secs(10)).await;
+		let origin = crate::clock::origin();
+		assert_eq!(origin, (at(10), Manual::WALL_START + Duration::from_secs(10)));
+
+		step_wall(Manual::WALL_START);
+		set_drift(1_000);
+		advance(Duration::from_secs(1)).await;
+		assert_eq!(
+			crate::clock::wall(),
+			Manual::WALL_START + Duration::from_millis(1_001),
+			"the drift skews the wall time"
+		);
+		assert_eq!(crate::clock::origin(), origin);
+	}
+
 	#[crate::test]
 	async fn cancellation() {
 		let fired = Rc::new(Cell::new(false));
@@ -1293,7 +1272,42 @@ mod tests {
 		assert_eq!(polls, [at(0), at(1), at(3)]);
 	}
 
-	/// Draws across awaits and spawned tasks, so replay covers the run's whole schedule.
+	/// A poll asking for no instant drops the timer it armed before and waits only on a wake.
+	#[crate::test]
+	async fn drive_waits_only_on_a_wake_when_no_instant_is_asked() {
+		let producer = crate::Producer::new(0usize);
+		let consumer = producer.consume();
+		let writer = spawn(async move {
+			for value in [1, 2] {
+				crate::clock::sleep(Duration::from_secs(value as u64 * 2 - 1)).await;
+				*producer.write().ok().expect("open") = value;
+			}
+		});
+
+		let mut polls = Vec::new();
+		let err = crate::clock::drive(|now, waiter| {
+			polls.push(now);
+			let wanted = polls.len();
+			let _ = consumer.poll(waiter, |value| {
+				if **value >= wanted {
+					Poll::Ready(())
+				} else {
+					Poll::Pending
+				}
+			});
+			match wanted {
+				1 => Ok(Some(at(2))),
+				2 => Ok(None),
+				_ => Err("done"),
+			}
+		})
+		.await;
+		assert_eq!(err, "done");
+		assert_eq!(polls, [at(0), at(1), at(4)], "the dropped timer still fired at 2");
+		writer.await.unwrap();
+	}
+
+	/// Draws of every kind across awaits and spawned tasks, so replay covers the run's whole schedule.
 	async fn draws() -> (u64, Vec<u64>) {
 		use rand::Rng as _;
 		let task = spawn(async {
@@ -1302,9 +1316,12 @@ mod tests {
 		});
 		let first = crate::clock::rng().next_u64();
 		let second = task.await.unwrap();
+		let mut rng = crate::clock::rng();
+		let mut bytes = [0; 8];
+		rng.fill_bytes(&mut bytes);
 		(
 			crate::clock::seed(),
-			vec![first, second, crate::clock::rng().next_u64()],
+			vec![first, second, rng.next_u32().into(), u64::from_le_bytes(bytes)],
 		)
 	}
 

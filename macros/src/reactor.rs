@@ -40,7 +40,7 @@ fn generate(args: TokenStream, item: &ItemImpl, marked: &[(Marker, ImplItemFn)])
 	if !args.is_empty() {
 		return Err(syn::Error::new_spanned(args, "#[reactor] takes no arguments"));
 	}
-	if let Some((_, trait_, _)) = &item.trait_ {
+	if let Some((trait_, _)) = &item.trait_ {
 		return Err(syn::Error::new_spanned(trait_, "#[reactor] goes on an inherent impl"));
 	}
 	let Type::Path(self_ty) = &*item.self_ty else {
@@ -183,12 +183,16 @@ fn take_marker(method: &mut ImplItemFn) -> syn::Result<Option<Marker>> {
 fn check_action(method: &ImplItemFn) -> syn::Result<()> {
 	let sig = &method.sig;
 	let shape = "an `#[action]` is `fn name(&mut self, waiter: &kio::Waiter) -> Poll<()>`";
-	if sig.asyncness.is_some() || sig.constness.is_some() || sig.unsafety.is_some() || !sig.generics.params.is_empty() {
+	if sig.asyncness.is_some()
+		|| sig.constness.is_some()
+		|| !matches!(sig.safety, syn::Safety::Default)
+		|| !sig.generics.params.is_empty()
+	{
 		return Err(syn::Error::new_spanned(&sig.ident, shape));
 	}
 	let mut inputs = sig.inputs.iter();
 	match inputs.next() {
-		Some(FnArg::Receiver(receiver)) if receiver.reference.is_some() && receiver.mutability.is_some() => {}
+		Some(FnArg::Receiver(receiver)) if matches!(receiver.kind, syn::ReceiverKind::Reference(_, _, Some(_))) => {}
 		Some(other) => return Err(syn::Error::new_spanned(other, shape)),
 		None => return Err(syn::Error::new_spanned(&sig.inputs, shape)),
 	}
@@ -208,7 +212,7 @@ fn check_invariant(method: &ImplItemFn) -> syn::Result<()> {
 	let sig = &method.sig;
 	let shape = "an `#[invariant]` is `fn name(&self) -> bool`";
 	let receiver = match sig.inputs.first() {
-		Some(FnArg::Receiver(receiver)) => receiver.reference.is_some() && receiver.mutability.is_none(),
+		Some(FnArg::Receiver(receiver)) => matches!(receiver.kind, syn::ReceiverKind::Reference(_, _, None)),
 		_ => false,
 	};
 	let output = matches!(&sig.output, ReturnType::Type(_, ty) if ends_in(ty, "bool"));
