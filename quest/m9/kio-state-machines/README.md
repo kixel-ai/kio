@@ -23,9 +23,9 @@ Decided 2026-11-25 (maintainer, `/quest-plan` on designing async Rust for state-
   2. [`#[kio::reactor]` guarded-action macro](/quest/m9/kio-state-machines/reactor-macro.md);
   3. [Adversarial `kio::clock::sim` + `kio::Tasks` scheduler + lost-wakeup detector](/quest/m9/kio-state-machines/adversarial-sim.md);
   4. `rust2-lean` MIR extraction in `kixel-ai/rust2` (`quest/m2/lean-spike.md` there).
-- ✅ Benchmark targets: `SendCredit` (`rs/moq-net/verify/credit/SendCredit.tla`, 289 lines: stream-credit line, preemption, `give_way`, `stuck` cursor, `Line::wake_head`) across all three `kio` spikes, plus routing (`WarmSettle` from `rs/moq-net/verify/warm/WarmSettle.tla` / `rs/moq-net/src/route/tests/warm.rs`) for the Lean 4 (`rust2-lean` vs. Aeneas) comparison (rejected: `Reconnect` / `Handover` for the `kio` spikes, `WarmSettle` across every spike).
+- ✅ Benchmark targets: `SendCredit` ([`rs/moq-net/verify/credit/SendCredit.tla`](https://github.com/moq-dev/moq/blob/main/rs/moq-net/verify/credit/SendCredit.tla), 289 lines: stream-credit line, preemption, `give_way`, `stuck` cursor, `Line::wake_head`) across all three `kio` spikes, plus routing (`WarmSettle` from [`rs/moq-net/verify/warm/WarmSettle.tla`](https://github.com/moq-dev/moq/blob/main/rs/moq-net/verify/warm/WarmSettle.tla) / [`rs/moq-net/src/route/tests/warm.rs`](https://github.com/moq-dev/moq/blob/main/rs/moq-net/src/route/tests/warm.rs)) for the Lean 4 (`rust2-lean` vs. Aeneas) comparison (rejected: `Reconnect` / `Handover` for the `kio` spikes, `WarmSettle` across every spike).
 
-Keep every prototype behind an internal/experimental feature or test crate until the comparison report settles the public API.
+Keep every prototype behind an internal/experimental feature or test crate until the comparison report settles the public API. The `SendCredit` and `WarmSettle` fixtures are moq-net logic, so they live in tests or an unpublished workspace crate, never in `kio`'s `src/`, since `AGENTS.md` keeps `kio` free of MoQ assumptions; only the generic machinery (scheduler policy, `StateMachine` trait and checker, `#[kio::reactor]`) goes behind a feature.
 
 Public API: none (lab spikes only). Wire: none.
 

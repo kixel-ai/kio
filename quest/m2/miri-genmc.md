@@ -2,10 +2,10 @@
 
 ## Goal
 
-Nightly runs kio's log and channel tests under Miri's GenMC mode, which
-explores every thread schedule and weak-memory outcome the Rust memory model
-allows, with no change to the code under test. An ordering bug in kio's
-lock-free code fails Nightly on every run, not only on a lucky seed.
+kio's post-merge CI runs kio's log and channel tests under Miri's GenMC mode,
+which explores every thread schedule and weak-memory outcome the Rust memory
+model allows, with no change to the code under test. An ordering bug in kio's
+lock-free code fails every run, not only a lucky seed.
 
 ## Waiting
 
@@ -20,16 +20,21 @@ lock-free code fails Nightly on every run, not only on a lucky seed.
 
 Decided 2026-11-10 (maintainer, /quest-plan of the follow-ups from
 [moq-dev/moq#8472](https://github.com/moq-dev/moq/pull/8472)): ✅ plan it in
-m5, waiting on upstream (rejected: dropping it and relying on random seeds
+moq's m5, waiting on upstream (rejected: dropping it and relying on random seeds
 alone).
 
 Loom did this job and was removed in
 [moq-dev/moq#7474](https://github.com/moq-dev/moq/pull/7474) because it
 needed a `cfg(loom)` shim around every primitive and never found a race.
-GenMC needs no shims, so the only upkeep is the Nightly row.
+GenMC needs no shims, so the only upkeep is one CI step. It moved to kio's m2
+with the extraction (866ef06).
 
-- Add a Miri CI/nightly pass over the tests of `src/log.rs` and `src/channel.rs`
-  that spawn threads. Keep the many-seeds pass for everything GenMC cannot run.
+- Add a GenMC pass over the tests of `src/log.rs` and `src/channel.rs` that
+  spawn threads to the post-merge Miri lane that `quest/m1/ci-coverage.md`
+  ([kixel-ai/kio#1](https://github.com/kixel-ai/kio/pull/1)) restores. Keep
+  that lane's single-run passes, and the many-seeds pass once
+  [its quest](/quest/m2/miri-seeds-tsan.md) lands, for everything GenMC cannot
+  run.
 - GenMC explodes with thread count and loop bounds. Size each test it runs
   to a few threads and a few operations, and measure that the pass fits CI.
 - As of 2026-11-10 it also misses bugs that depend on reused allocations and
@@ -40,4 +45,5 @@ Public API: none. Wire: none.
 
 ## Related
 
+- [Miri many seeds and ThreadSanitizer](/quest/m2/miri-seeds-tsan.md) - the random-schedule passes that cover what GenMC cannot run
 - [Drop kio's epoch fence](/quest/m2/crossbeam-pin-fence.md) - the ordering in kio's log that only a weak-memory check can confirm

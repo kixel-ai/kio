@@ -18,8 +18,9 @@ the proof checks in a CI job. The PR reports what the dialect cost:
 It ends by recommending, from those numbers, whether to port the rest of
 kio's unsafe code (`channel.rs`, `task.rs`, `clock/runtime.rs`) and then
 moq-net's lite-07 subscription group accounting, which the TLA+ model in
-`rs/moq-net/verify/subscribe/` checks only as a design, and plans that work as
-follow-up quests or drops it.
+[`rs/moq-net/verify/subscribe/`](https://github.com/moq-dev/moq/tree/main/rs/moq-net/verify/subscribe)
+checks only as a design, and plans that work as follow-up quests (the
+subscription half in `moq-dev/moq`'s tree) or drops it.
 
 ## Plan
 
