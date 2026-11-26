@@ -1,16 +1,33 @@
 //! What Verus assumes of the types and functions the log uses from outside the proof.
 //!
 //! Each declaration here is trusted: Verus takes it as written, without checking the code
-//! it describes.
+//! it describes. Plain builds see only [`drain_front`].
 
+#[cfg(verus_keep_ghost)]
 use std::cell::UnsafeCell;
 
+#[cfg(verus_keep_ghost)]
 use crossbeam_epoch as epoch;
 use smallvec::SmallVec;
+#[cfg(verus_keep_ghost)]
 use vstd::prelude::*;
 
+#[cfg(verus_keep_ghost)]
 use super::Evicted;
 
+/// TRUSTED: move the first `count` items out of `list`.
+#[cfg_attr(verus_keep_ghost, verus_verify(external_body), verus_spec(front =>
+	requires
+		count <= items(old(list)).len(),
+	ensures
+		items(&front) == items(old(list)).take(count as int),
+		items(final(list)) == items(old(list)).skip(count as int),
+))]
+pub fn drain_front<A: smallvec::Array>(list: &mut SmallVec<A>, count: usize) -> SmallVec<[A::Item; 1]> {
+	list.drain(..count).collect()
+}
+
+#[cfg(verus_keep_ghost)]
 verus! {
 
 /// The error a read returns.
@@ -58,18 +75,6 @@ pub assume_specification<A: smallvec::Array>[ <SmallVec<A> as core::ops::Deref>:
 	ensures
 		slice@ == items(list),
 ;
-
-/// TRUSTED: move the first `count` items out of `list`.
-#[verifier::external_body]
-pub fn drain_front<A: smallvec::Array>(list: &mut SmallVec<A>, count: usize) -> (front: SmallVec<[A::Item; 1]>)
-	requires
-		count <= items(old(list)).len(),
-	ensures
-		items(&front) == items(old(list)).take(count as int),
-		items(final(list)) == items(old(list)).skip(count as int),
-{
-	list.drain(..count).collect()
-}
 
 pub assume_specification<A: smallvec::Array>[ SmallVec::<A>::new ]() -> (list: SmallVec<A>)
 	ensures

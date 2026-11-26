@@ -2,24 +2,35 @@
 //!
 //! Each type wraps a std atomic and, under Verus, pairs it with a permission whose
 //! `value` is the atomic's current value: an operation needs the permission, so the
-//! proof always knows what a load returns. Plain builds erase the permissions; the
+//! proof always knows what a load returns. Plain builds have no permissions; the
 //! wrappers compile to the std operation with the ordering the caller names.
 //!
 //! These bodies are trusted. Verus models every atomic access as sequentially
 //! consistent, so the proof assumes the orderings the log names carry what it
 //! publishes: a `Release` store makes the writes before it visible to the `Acquire`
 //! load that reads it. The stores require `Release` so a weakened publish fails the
-//! proof; whether each load's ordering suffices is Miri's and GenMC's to check.
+//! proof; whether each load's ordering suffices is Miri's and GenMC's to check. The
+//! loads rule out `Release` and `AcqRel`, which std's loads panic on.
 
 use std::sync::atomic::{self, Ordering};
 
+#[cfg(verus_keep_ghost)]
 use vstd::prelude::*;
 
-verus! {
-
-/// An `AtomicUsize` whose value the proof tracks through a [`UsizePerm`].
-#[verifier::external_body]
+/// An `AtomicUsize` whose value the proof tracks through a `UsizePerm`.
+#[cfg_attr(verus_keep_ghost, verus_verify(external_body))]
 pub struct Usize(atomic::AtomicUsize);
+
+/// An `AtomicU64` whose value the proof tracks through a `U64Perm`.
+#[cfg_attr(verus_keep_ghost, verus_verify(external_body))]
+pub struct U64(atomic::AtomicU64);
+
+/// An `AtomicPtr<T>` whose value the proof tracks through a `PtrPerm`.
+#[cfg_attr(verus_keep_ghost, verus_verify(external_body, accept_recursive_types(T)))]
+pub struct Ptr<T>(atomic::AtomicPtr<T>);
+
+#[cfg(verus_keep_ghost)]
+verus! {
 
 /// The permission to access a [`Usize`], and its value.
 #[verifier::external_body]
@@ -38,51 +49,7 @@ impl UsizePerm {
 impl Usize {
 	/// Which atomic this is, matched against a permission's.
 	pub uninterp spec fn id(&self) -> int;
-
-	#[inline]
-	#[verifier::external_body]
-	pub fn new(value: usize) -> (result: (Self, Tracked<UsizePerm>))
-		ensures
-			result.1@.id() == result.0.id(),
-			result.1@.value() == value,
-	{
-		(Self(atomic::AtomicUsize::new(value)), Tracked::assume_new())
-	}
-
-	#[inline]
-	#[verifier::external_body]
-	#[verifier::atomic]
-	pub fn load(&self, Tracked(perm): Tracked<&UsizePerm>, order: Ordering) -> (value: usize)
-		requires
-			perm.id() == self.id(),
-		ensures
-			value == perm.value(),
-		opens_invariants none
-		no_unwind
-	{
-		self.0.load(order)
-	}
-
-	#[inline]
-	#[verifier::external_body]
-	#[verifier::atomic]
-	pub fn store(&self, Tracked(perm): Tracked<&mut UsizePerm>, value: usize, order: Ordering)
-		requires
-			old(perm).id() == self.id(),
-			order == Ordering::Release,
-		ensures
-			final(perm).id() == self.id(),
-			final(perm).value() == value,
-		opens_invariants none
-		no_unwind
-	{
-		self.0.store(value, order)
-	}
 }
-
-/// An `AtomicU64` whose value the proof tracks through a [`U64Perm`].
-#[verifier::external_body]
-pub struct U64(atomic::AtomicU64);
 
 /// The permission to access a [`U64`], and its value.
 #[verifier::external_body]
@@ -101,52 +68,7 @@ impl U64Perm {
 impl U64 {
 	/// Which atomic this is, matched against a permission's.
 	pub uninterp spec fn id(&self) -> int;
-
-	#[inline]
-	#[verifier::external_body]
-	pub fn new(value: u64) -> (result: (Self, Tracked<U64Perm>))
-		ensures
-			result.1@.id() == result.0.id(),
-			result.1@.value() == value,
-	{
-		(Self(atomic::AtomicU64::new(value)), Tracked::assume_new())
-	}
-
-	#[inline]
-	#[verifier::external_body]
-	#[verifier::atomic]
-	pub fn load(&self, Tracked(perm): Tracked<&U64Perm>, order: Ordering) -> (value: u64)
-		requires
-			perm.id() == self.id(),
-		ensures
-			value == perm.value(),
-		opens_invariants none
-		no_unwind
-	{
-		self.0.load(order)
-	}
-
-	#[inline]
-	#[verifier::external_body]
-	#[verifier::atomic]
-	pub fn store(&self, Tracked(perm): Tracked<&mut U64Perm>, value: u64, order: Ordering)
-		requires
-			old(perm).id() == self.id(),
-			order == Ordering::Release,
-		ensures
-			final(perm).id() == self.id(),
-			final(perm).value() == value,
-		opens_invariants none
-		no_unwind
-	{
-		self.0.store(value, order)
-	}
 }
-
-/// An `AtomicPtr<T>` whose value the proof tracks through a [`PtrPerm`].
-#[verifier::external_body]
-#[verifier::accept_recursive_types(T)]
-pub struct Ptr<T>(atomic::AtomicPtr<T>);
 
 /// The permission to access a [`Ptr`], and its value.
 #[verifier::external_body]
@@ -166,35 +88,51 @@ impl<T> PtrPerm<T> {
 impl<T> Ptr<T> {
 	/// Which atomic this is, matched against a permission's.
 	pub uninterp spec fn id(&self) -> int;
+}
 
+} // verus!
+
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+impl Usize {
 	#[inline]
-	#[verifier::external_body]
-	pub fn new(value: *mut T) -> (result: (Self, Tracked<PtrPerm<T>>))
+	#[cfg_attr(verus_keep_ghost, verifier::external_body)]
+	#[cfg_attr(verus_keep_ghost, verus_spec(result =>
+		with
+			-> perm: Tracked<UsizePerm>
 		ensures
-			result.1@.id() == result.0.id(),
-			result.1@.value() == value,
-	{
-		(Self(atomic::AtomicPtr::new(value)), Tracked::assume_new())
+			perm@.id() == result.id(),
+			perm@.value() == value,
+	))]
+	pub fn new(value: usize) -> Self {
+		proof_with!(|= Tracked::assume_new());
+		Self(atomic::AtomicUsize::new(value))
 	}
 
 	#[inline]
-	#[verifier::external_body]
-	#[verifier::atomic]
-	pub fn load(&self, Tracked(perm): Tracked<&PtrPerm<T>>, order: Ordering) -> (value: *mut T)
+	#[cfg_attr(verus_keep_ghost, verifier::external_body)]
+	#[cfg_attr(verus_keep_ghost, verifier::atomic)]
+	#[cfg_attr(verus_keep_ghost, verus_spec(value =>
+		with
+			Tracked(perm): Tracked<&UsizePerm>
 		requires
 			perm.id() == self.id(),
+			order != Ordering::Release,
+			order != Ordering::AcqRel,
 		ensures
 			value == perm.value(),
 		opens_invariants none
 		no_unwind
-	{
+	))]
+	pub fn load(&self, order: Ordering) -> usize {
 		self.0.load(order)
 	}
 
 	#[inline]
-	#[verifier::external_body]
-	#[verifier::atomic]
-	pub fn store(&self, Tracked(perm): Tracked<&mut PtrPerm<T>>, value: *mut T, order: Ordering)
+	#[cfg_attr(verus_keep_ghost, verifier::external_body)]
+	#[cfg_attr(verus_keep_ghost, verifier::atomic)]
+	#[cfg_attr(verus_keep_ghost, verus_spec(
+		with
+			Tracked(perm): Tracked<&mut UsizePerm>
 		requires
 			old(perm).id() == self.id(),
 			order == Ordering::Release,
@@ -203,12 +141,121 @@ impl<T> Ptr<T> {
 			final(perm).value() == value,
 		opens_invariants none
 		no_unwind
-	{
+	))]
+	pub fn store(&self, value: usize, order: Ordering) {
 		self.0.store(value, order)
 	}
 }
 
-} // verus!
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+impl U64 {
+	#[inline]
+	#[cfg_attr(verus_keep_ghost, verifier::external_body)]
+	#[cfg_attr(verus_keep_ghost, verus_spec(result =>
+		with
+			-> perm: Tracked<U64Perm>
+		ensures
+			perm@.id() == result.id(),
+			perm@.value() == value,
+	))]
+	pub fn new(value: u64) -> Self {
+		proof_with!(|= Tracked::assume_new());
+		Self(atomic::AtomicU64::new(value))
+	}
+
+	#[inline]
+	#[cfg_attr(verus_keep_ghost, verifier::external_body)]
+	#[cfg_attr(verus_keep_ghost, verifier::atomic)]
+	#[cfg_attr(verus_keep_ghost, verus_spec(value =>
+		with
+			Tracked(perm): Tracked<&U64Perm>
+		requires
+			perm.id() == self.id(),
+			order != Ordering::Release,
+			order != Ordering::AcqRel,
+		ensures
+			value == perm.value(),
+		opens_invariants none
+		no_unwind
+	))]
+	pub fn load(&self, order: Ordering) -> u64 {
+		self.0.load(order)
+	}
+
+	#[inline]
+	#[cfg_attr(verus_keep_ghost, verifier::external_body)]
+	#[cfg_attr(verus_keep_ghost, verifier::atomic)]
+	#[cfg_attr(verus_keep_ghost, verus_spec(
+		with
+			Tracked(perm): Tracked<&mut U64Perm>
+		requires
+			old(perm).id() == self.id(),
+			order == Ordering::Release,
+		ensures
+			final(perm).id() == self.id(),
+			final(perm).value() == value,
+		opens_invariants none
+		no_unwind
+	))]
+	pub fn store(&self, value: u64, order: Ordering) {
+		self.0.store(value, order)
+	}
+}
+
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+impl<T> Ptr<T> {
+	#[inline]
+	#[cfg_attr(verus_keep_ghost, verifier::external_body)]
+	#[cfg_attr(verus_keep_ghost, verus_spec(result =>
+		with
+			-> perm: Tracked<PtrPerm<T>>
+		ensures
+			perm@.id() == result.id(),
+			perm@.value() == value,
+	))]
+	pub fn new(value: *mut T) -> Self {
+		proof_with!(|= Tracked::assume_new());
+		Self(atomic::AtomicPtr::new(value))
+	}
+
+	#[inline]
+	#[cfg_attr(verus_keep_ghost, verifier::external_body)]
+	#[cfg_attr(verus_keep_ghost, verifier::atomic)]
+	#[cfg_attr(verus_keep_ghost, verus_spec(value =>
+		with
+			Tracked(perm): Tracked<&PtrPerm<T>>
+		requires
+			perm.id() == self.id(),
+			order != Ordering::Release,
+			order != Ordering::AcqRel,
+		ensures
+			value == perm.value(),
+		opens_invariants none
+		no_unwind
+	))]
+	pub fn load(&self, order: Ordering) -> *mut T {
+		self.0.load(order)
+	}
+
+	#[inline]
+	#[cfg_attr(verus_keep_ghost, verifier::external_body)]
+	#[cfg_attr(verus_keep_ghost, verifier::atomic)]
+	#[cfg_attr(verus_keep_ghost, verus_spec(
+		with
+			Tracked(perm): Tracked<&mut PtrPerm<T>>
+		requires
+			old(perm).id() == self.id(),
+			order == Ordering::Release,
+		ensures
+			final(perm).id() == self.id(),
+			final(perm).value() == value,
+		opens_invariants none
+		no_unwind
+	))]
+	pub fn store(&self, value: *mut T, order: Ordering) {
+		self.0.store(value, order)
+	}
+}
 
 // Outside the proof: code the proof doesn't cover reaches the atomic directly, and is
 // trusted to keep the log's invariant as the verified code does.

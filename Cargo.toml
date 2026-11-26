@@ -79,11 +79,13 @@ rand = { workspace = true }
 serde = { workspace = true, optional = true }
 serde_with = { workspace = true, optional = true }
 smallvec = { version = "1.15", features = ["union"] }
-# Verus's specs and ghost types for the proof in src/log.rs, erased from plain builds.
-# Pinned to the Verus release in nix/verus.nix, which checks it.
-vstd = "=0.0.0-2026-11-22-0344"
 # The host timers, and the runtime handle that keeps a paused runtime's clock on its own origin.
 tokio = { workspace = true, features = ["rt", "time"], optional = true }
+
+# Verus's specs and ghost types for the proof in src/log.rs. Only `just verify` sets this
+# cfg, so plain builds compile no Verus crate. Pinned to the release in nix/verus.nix.
+[target.'cfg(verus_keep_ghost)'.dependencies]
+vstd = "=0.0.0-2026-11-22-0344"
 
 [target.'cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))'.dependencies]
 # Reads the clocks that count the host's sleep, which std's `Instant` does not.

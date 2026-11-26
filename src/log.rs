@@ -20,26 +20,34 @@
 //!
 //! # Verification
 //!
-//! The append, evict, and read paths are written in Verus's `verus!` dialect, and
-//! `just verify` proves them: a reader only returns a slot the writer fully wrote and
-//! published, in the segment and at the offset its index names, and a slot's address
-//! never changes once written. It does not prove the converse, that every index below
-//! the committed end reads as present. Plain builds erase the proof. The proof trusts
-//! three things it does not check, each marked `TRUSTED` below:
+//! The append, evict, and read paths carry a Verus proof, and `just verify` checks it: a
+//! reader only returns a slot the writer fully wrote and published, in the segment and
+//! at the offset its index names, and a slot's address never changes once written. It
+//! does not prove the converse, that every index below the committed end reads as
+//! present.
 //!
-//! - the atomics' orderings ([`atomic`]): Verus reasons as if every access were
+//! The proof is written in Verus's attribute syntax, so this file is plain Rust to
+//! every other build: contracts sit in `#[cfg_attr(verus_keep_ghost, verus_spec(..))]`,
+//! proof steps in `proof!`, `proof_decl!`, and `proof_with!`, and the ghost types and
+//! lemmas in `verus!` blocks under `#[cfg(verus_keep_ghost)]`. Only `just verify` sets
+//! that cfg, so plain builds compile no Verus crate; `log/erased.rs` stands in for its
+//! macros.
+//!
+//! The proof trusts what it does not check, each marked `TRUSTED` below. The main
+//! assumptions:
+//!
+//! - the atomics' orderings (`log/atomic.rs`): Verus reasons as if every access were
 //!   sequentially consistent;
-//! - a segment's allocation and layout ([`Segment::allocate`], [`Segment::slot`]);
-//! - epoch reclamation ([`pinned`]): a segment a pinned read reached stays allocated
+//! - a segment's allocation and layout (`Segment::allocate`, `Segment::slot`);
+//! - epoch reclamation (`pinned`): a segment a pinned read reached stays allocated
 //!   until the pin drops. Retiring and freeing segments, the base, and the hint check in
 //!   [`Reader::read`] sit outside the proof, so nothing proves an evicted segment
 //!   unreachable to a pinned reader.
-
-// Plain builds erase the proof, which is all that reads the ghost state.
-#![cfg_attr(
-	not(verus_keep_ghost),
-	expect(dead_code, reason = "plain builds erase the proof that reads the ghost state")
-)]
+//!
+//! The rest are narrower: the specs of the `SmallVec`, `UnsafeCell`, and epoch types
+//! the proof names, and `drain_front`'s split of the segment list (`log/specs.rs`); the
+//! heap-byte count's bound in [`Writer::reserve`]; and the unverified helpers marked
+//! `external_body`.
 
 use std::{
 	alloc::{self, Layout},
@@ -56,17 +64,22 @@ use std::{
 
 use crossbeam_epoch as epoch;
 use smallvec::SmallVec;
+#[cfg(verus_keep_ghost)]
 use vstd::{
 	invariant::{AtomicInvariant, InvariantPredicate},
 	open_atomic_invariant,
 	prelude::*,
-	raw_ptr::{PointsTo, ptr_mut_write},
+	raw_ptr::PointsTo,
 	resource::{
 		Loc,
 		ghost_var::{GhostVar, GhostVarAuth},
 		map::{GhostMapAuth, GhostPersistentPointsTo},
 	},
 };
+
+#[cfg(not(verus_keep_ghost))]
+#[macro_use]
+mod erased;
 
 mod atomic;
 mod specs;
@@ -81,8 +94,8 @@ use vstd::view::View as _;
 // A written slot or a segment's header, frozen: readers share it, nobody writes it again.
 #[cfg(verus_only)]
 use vstd::shared::Shared as Frozen;
-// Plain builds erase ghost state; this only names the erased type.
-#[cfg(not(verus_only))]
+// Verus builds that don't verify erase ghost state; this only names the erased type.
+#[cfg(all(verus_keep_ghost, not(verus_only)))]
 type Frozen<T> = std::marker::PhantomData<T>;
 
 /// The entry was evicted before the reader got to it.
@@ -100,17 +113,18 @@ impl std::error::Error for Evicted {}
 /// One entry's storage, written once.
 type Slot<T> = UnsafeCell<MaybeUninit<T>>;
 
-verus! {
-
 /// Slots in the first segment: one, since many logs never hold more.
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 const FIRST_SEGMENT: usize = 1;
 
 /// Slots in the largest segment, so a long log allocates in steps of this many entries.
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 const MAX_SEGMENT: usize = 64;
 
 /// A run of `capacity` slots from `start`, written once each, in order. The slots follow
 /// the header in the same allocation, so a segment is only ever handled by its pointer.
 #[repr(C)]
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 struct Segment<T> {
 	start: u64,
 	capacity: usize,
@@ -127,23 +141,11 @@ struct Segment<T> {
 	slots: [Slot<T>; 0],
 }
 
+#[cfg(verus_keep_ghost)]
+verus! {
+
 /// Where slot `at` of the segment at `segment` holds its entry.
 uninterp spec fn slot_ptr<T>(segment: *mut Segment<T>, at: int) -> *mut T;
-
-/// TRUSTED: a segment a pinned read reached stays allocated until the pin drops, which
-/// epoch reclamation guarantees and the proof does not model; the reference lives for
-/// `'a`, which the caller ties to its pin.
-#[verifier::external_body]
-fn pinned<'a, X>(ptr: *mut X, Tracked(perm): Tracked<&Frozen<PointsTo<X>>>) -> (value: &'a X)
-	requires
-		perm@.ptr() == ptr,
-		perm@.is_init(),
-	ensures
-		*value == perm@.value(),
-{
-	// SAFETY: initialized, per the permission, and alive for `'a`, per the caller's pin.
-	unsafe { &*ptr }
-}
 
 /// Permissions for a segment's slots, by position.
 type Slots<T> = Map<nat, PointsTo<T>>;
@@ -164,104 +166,183 @@ impl<T> Segment<T> {
 		&&& 1 <= self.capacity <= MAX_SEGMENT
 		&&& self.start + self.capacity <= u64::MAX
 	}
+}
 
+} // verus!
+
+/// TRUSTED: a segment a pinned read reached stays allocated until the pin drops, which
+/// epoch reclamation guarantees and the proof does not model; the reference lives for
+/// `'a`, which the caller ties to its pin.
+#[cfg_attr(verus_keep_ghost, verus_verify(external_body), verus_spec(value =>
+	with
+		Tracked(perm): Tracked<&Frozen<PointsTo<X>>>
+	requires
+		perm@.ptr() == ptr,
+		perm@.is_init(),
+	ensures
+		*value == perm@.value(),
+))]
+fn pinned<'a, X>(ptr: *mut X) -> &'a X {
+	// SAFETY: initialized, per the permission, and alive for `'a`, per the caller's pin.
+	unsafe { &*ptr }
+}
+
+/// TRUSTED: `vstd::raw_ptr::ptr_mut_write`, with its contract, which plain builds can't
+/// call without `vstd`.
+#[cfg_attr(verus_keep_ghost, verus_verify(external_body), verus_spec(
+	with
+		Tracked(perm): Tracked<&mut PointsTo<X>>
+	requires
+		old(perm).ptr() == ptr,
+	ensures
+		final(perm).ptr() == ptr,
+		final(perm).is_init(),
+		final(perm).value() == value,
+	opens_invariants none
+	no_unwind
+))]
+#[inline]
+fn write<X>(ptr: *mut X, value: X) {
+	// SAFETY: the permission covers `ptr`, so it is allocated and aligned for an `X`.
+	unsafe { ptr.write(value) }
+}
+
+/// Fail loud once the index space is spent: the next segment's indices would pass
+/// `u64::MAX`.
+#[cfg_attr(verus_keep_ghost, verus_verify(external_body))]
+fn exhausted() -> ! {
+	panic!("log index overflow")
+}
+
+/// Bytes a log's shared state occupies.
+#[cfg_attr(verus_keep_ghost, verus_verify(external_body))]
+const fn shared_heap<T>() -> usize {
+	crate::arc_heap::<Shared<T>>()
+}
+
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+impl<T> Segment<T> {
 	/// TRUSTED: allocate a segment of `capacity` slots, the header first, and hand out the
 	/// permission for each.
-	#[verifier::external_body]
-	fn allocate(capacity: usize) -> (result: (NonNull<Self>, Tracked<PointsTo<Self>>, Tracked<Slots<T>>))
+	#[cfg_attr(verus_keep_ghost, verifier::external_body)]
+	#[cfg_attr(verus_keep_ghost, verus_spec(segment =>
+		with
+			-> perms: Tracked<(PointsTo<Self>, Slots<T>)>
 		ensures
-			result.1@.ptr() == result.0.as_ptr(),
-			result.1@.is_uninit(),
+			perms@.0.ptr() == segment.as_ptr(),
+			perms@.0.is_uninit(),
 			forall|at: nat| at < capacity ==> {
-				&&& #[trigger] result.2@.contains_key(at)
-				&&& result.2@[at].ptr() == slot_ptr(result.0.as_ptr(), at as int)
-				&&& result.2@[at].is_uninit()
+				&&& #[trigger] perms@.1.contains_key(at)
+				&&& perms@.1[at].ptr() == slot_ptr(segment.as_ptr(), at as int)
+				&&& perms@.1[at].is_uninit()
 			},
-	{
+	))]
+	fn allocate(capacity: usize) -> NonNull<Self> {
 		let layout = Self::layout(capacity);
 		// SAFETY: the header gives the layout a non-zero size.
 		let Some(segment) = NonNull::new(unsafe { alloc::alloc(layout) }.cast::<Self>()) else {
 			alloc::handle_alloc_error(layout);
 		};
-		(segment, Tracked::assume_new(), Tracked::assume_new())
+		proof_with!(|= Tracked::assume_new());
+		segment
 	}
 
 	/// An empty segment of `capacity` slots from `start`.
-	fn new(start: u64, capacity: usize) -> (result: (NonNull<Self>, Tracked<Fresh<T>>))
+	#[cfg_attr(verus_keep_ghost, verus_spec(segment =>
+		with
+			-> fresh: Tracked<Fresh<T>>
 		requires
 			1 <= capacity <= MAX_SEGMENT,
 			start + capacity <= u64::MAX,
 		ensures
-			result.1@.header.ptr() == result.0.as_ptr(),
-			result.1@.header.is_init(),
-			result.1@.header.value().wf(),
-			result.1@.header.value().start == start,
-			result.1@.header.value().capacity == capacity,
-			result.1@.filled.id() == result.1@.header.value().filled.id(),
-			result.1@.filled.value() == 0,
-			result.1@.next.id() == result.1@.header.value().next.id(),
-			result.1@.next.value()@.addr == 0,
+			fresh@.header.ptr() == segment.as_ptr(),
+			fresh@.header.is_init(),
+			fresh@.header.value().wf(),
+			fresh@.header.value().start == start,
+			fresh@.header.value().capacity == capacity,
+			fresh@.filled.id() == fresh@.header.value().filled.id(),
+			fresh@.filled.value() == 0,
+			fresh@.next.id() == fresh@.header.value().next.id(),
+			fresh@.next.value()@.addr == 0,
 			forall|at: nat| at < capacity ==> {
-				&&& #[trigger] result.1@.slots.contains_key(at)
-				&&& result.1@.slots[at].ptr() == slot_ptr(result.0.as_ptr(), at as int)
-				&&& result.1@.slots[at].is_uninit()
+				&&& #[trigger] fresh@.slots.contains_key(at)
+				&&& fresh@.slots[at].ptr() == slot_ptr(segment.as_ptr(), at as int)
+				&&& fresh@.slots[at].is_uninit()
 			},
-	{
-		let (segment, Tracked(mut header), Tracked(slots)) = Self::allocate(capacity);
-		let (filled, Tracked(filled_perm)) = atomic::Usize::new(0);
-		let (next, Tracked(next_perm)) = atomic::Ptr::new(ptr::null_mut());
-		ptr_mut_write(
-			segment.as_ptr(),
-			Tracked(&mut header),
-			Self {
-				start,
-				capacity,
-				filled,
-				taken: AtomicUsize::new(0),
-				owners: AtomicUsize::new(1),
-				next,
-				slots: [],
-			},
-		);
-		(segment, Tracked(Fresh { header, filled: filled_perm, next: next_perm, slots }))
+	))]
+	fn new(start: u64, capacity: usize) -> NonNull<Self> {
+		proof_with!(=> Tracked(perms));
+		let segment = Self::allocate(capacity);
+		proof_with!(=> Tracked(filled_perm));
+		let filled = atomic::Usize::new(0);
+		proof_with!(=> Tracked(next_perm));
+		let next = atomic::Ptr::new(ptr::null_mut());
+		proof_decl! {
+			let tracked (mut header, slots) = perms;
+		}
+		let value = Self {
+			start,
+			capacity,
+			filled,
+			taken: AtomicUsize::new(0),
+			owners: AtomicUsize::new(1),
+			next,
+			slots: [],
+		};
+		proof_with!(Tracked(&mut header));
+		write(segment.as_ptr(), value);
+		proof_decl! {
+			let tracked fresh = Fresh { header, filled: filled_perm, next: next_perm, slots };
+		}
+		proof_with!(|= Tracked(fresh));
+		segment
 	}
 
 	/// TRUSTED: the slot at `at`, derived from the allocation's pointer so it may reach past
 	/// the header.
-	#[verifier::external_body]
-	fn slot(segment: NonNull<Self>, at: usize) -> (slot: *mut T)
+	#[cfg_attr(verus_keep_ghost, verifier::external_body)]
+	#[cfg_attr(verus_keep_ghost, verus_spec(slot =>
 		ensures
 			slot == slot_ptr(segment.as_ptr(), at as int),
-	{
+	))]
+	fn slot(segment: NonNull<Self>, at: usize) -> *mut T {
 		// SAFETY: in bounds of the allocation, for an `at` below the capacity, and
 		// `MaybeUninit` and `UnsafeCell` share their content's layout.
-		unsafe { ptr::addr_of!((*segment.as_ptr()).slots).cast::<Slot<T>>().add(at).cast_mut().cast::<T>() }
+		unsafe {
+			ptr::addr_of!((*segment.as_ptr()).slots)
+				.cast::<Slot<T>>()
+				.add(at)
+				.cast_mut()
+				.cast::<T>()
+		}
 	}
 
 	/// The header of a segment a reader reached.
-	fn header<'a>(segment: NonNull<Self>, Tracked(perm): Tracked<&Frozen<PointsTo<Self>>>) -> (header: &'a Self)
+	#[cfg_attr(verus_keep_ghost, verus_spec(header =>
+		with
+			Tracked(perm): Tracked<&Frozen<PointsTo<Self>>>
 		requires
 			perm@.ptr() == segment.as_ptr(),
 			perm@.is_init(),
 		ensures
 			*header == perm@.value(),
-	{
-		pinned(segment.as_ptr(), Tracked(perm))
+	))]
+	fn header<'a>(segment: NonNull<Self>) -> &'a Self {
+		proof_with!(Tracked(perm));
+		pinned(segment.as_ptr())
 	}
 
 	/// Heap a segment of `capacity` slots occupies, as [`Self::heap`].
-	#[verifier::external_body]
+	#[cfg_attr(verus_keep_ghost, verifier::external_body)]
 	fn bytes(capacity: usize) -> usize {
 		Self::heap(capacity)
 	}
 
 	/// The written entry at `index`.
-	fn get<'a>(
-		segment: NonNull<Self>,
-		index: u64,
-		Tracked(header): Tracked<&Frozen<PointsTo<Self>>>,
-		Tracked(slot): Tracked<&Frozen<PointsTo<T>>>,
-	) -> (entry: &'a T)
+	#[cfg_attr(verus_keep_ghost, verus_spec(entry =>
+		with
+			Tracked(header): Tracked<&Frozen<PointsTo<Self>>>,
+			Tracked(slot): Tracked<&Frozen<PointsTo<T>>>,
 		requires
 			header@.ptr() == segment.as_ptr(),
 			header@.is_init(),
@@ -270,11 +351,19 @@ impl<T> Segment<T> {
 			slot@.is_init(),
 		ensures
 			*entry == slot@.value(),
-	{
-		let at = (index - Self::header(segment, Tracked(header)).start) as usize;
-		pinned(Self::slot(segment, at), Tracked(slot))
+	))]
+	fn get<'a>(segment: NonNull<Self>, index: u64) -> &'a T {
+		proof_with!(Tracked(header));
+		let first = Self::header(segment);
+		let at = (index - first.start) as usize;
+		let slot_at = Self::slot(segment, at);
+		proof_with!(Tracked(slot));
+		pinned(slot_at)
 	}
 }
+
+#[cfg(verus_keep_ghost)]
+verus! {
 
 /// What the writer has published, as the proof sees it: the committed end, the first
 /// segment a reader may start from, and each segment it allocated, by an id that is
@@ -369,20 +458,6 @@ spec fn segment_inv<T>(ledger: Ledger<T>, id: nat) -> bool {
 	}
 }
 
-
-/// Fail loud once the index space is spent: the next segment's indices would pass
-/// `u64::MAX`.
-#[verifier::external_body]
-fn exhausted() -> ! {
-	panic!("log index overflow")
-}
-
-/// Bytes a log's shared state occupies.
-#[verifier::external_body]
-const fn shared_heap<T>() -> usize {
-	crate::arc_heap::<Shared<T>>()
-}
-
 /// A segment someone reached, with what it needs to find it in the ledger again.
 tracked struct Reached<T> {
 	ghost id: nat,
@@ -443,21 +518,6 @@ impl<T> Reached<T> {
 	}
 }
 
-/// The state a writer and its readers share.
-struct Shared<T> {
-	/// One past the last committed entry, Release-stored after its slot is written. Only
-	/// the writer stores it.
-	end: atomic::U64,
-	/// Entries below this are evicted. Only the writer stores it, before retiring the
-	/// segments it passes.
-	base: AtomicU64,
-	/// The oldest live segment, where a reader without a usable segment starts.
-	head: atomic::Ptr<Segment<T>>,
-	ledger: Tracked<AtomicInvariant<Key, Ledger<T>, LedgerPred>>,
-	#[cfg(test)]
-	collector: Option<epoch::Collector>,
-}
-
 spec const LEDGER: int = 0;
 
 impl<T> Shared<T> {
@@ -469,15 +529,6 @@ impl<T> Shared<T> {
 		&&& self.key().head == self.head.id()
 		&&& self.key().end == self.end.id()
 		&&& self.ledger@.namespace() == LEDGER
-	}
-
-	#[verifier::external_body]
-	fn pin(&self) -> epoch::Guard {
-		#[cfg(test)]
-		if let Some(collector) = &self.collector {
-			return collector.register().pin();
-		}
-		epoch::pin()
 	}
 }
 
@@ -617,10 +668,41 @@ proof fn register<T>(
 	Reached { id, header, mark }
 }
 
+} // verus!
+
+/// The state a writer and its readers share.
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+struct Shared<T> {
+	/// One past the last committed entry, Release-stored after its slot is written. Only
+	/// the writer stores it.
+	end: atomic::U64,
+	/// Entries below this are evicted. Only the writer stores it, before retiring the
+	/// segments it passes.
+	base: AtomicU64,
+	/// The oldest live segment, where a reader without a usable segment starts.
+	head: atomic::Ptr<Segment<T>>,
+	#[cfg(verus_keep_ghost_body)]
+	ledger: Tracked<AtomicInvariant<Key, Ledger<T>, LedgerPred>>,
+	#[cfg(test)]
+	collector: Option<epoch::Collector>,
+}
+
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+impl<T> Shared<T> {
+	#[cfg_attr(verus_keep_ghost, verifier::external_body)]
+	fn pin(&self) -> epoch::Guard {
+		#[cfg(test)]
+		if let Some(collector) = &self.collector {
+			return collector.register().pin();
+		}
+		epoch::pin()
+	}
+}
+
 /// Appends entries to a log and evicts them from its front.
 ///
 /// Not `Clone`: appends take `&mut self`, so one writer orders them.
-#[verifier::reject_recursive_types(T)]
+#[cfg_attr(verus_keep_ghost, verus_verify(reject_recursive_types(T)))]
 pub struct Writer<T: Send + Sync + 'static> {
 	shared: Arc<Shared<T>>,
 	/// The live segments, oldest first. The last is the one the next entry goes into,
@@ -628,8 +710,12 @@ pub struct Writer<T: Send + Sync + 'static> {
 	segments: SmallVec<[NonNull<Segment<T>>; 1]>,
 	/// Bytes of the shared state and the live segments, excluding `segments` itself.
 	heap: usize,
+	#[cfg(verus_keep_ghost_body)]
 	pen: Tracked<Pen<T>>,
 }
+
+#[cfg(verus_keep_ghost)]
+verus! {
 
 impl<T: Send + Sync + 'static> Writer<T> {
 	closed spec fn key(&self) -> Key {
@@ -701,93 +787,131 @@ impl<T: Send + Sync + 'static> Writer<T> {
 	pub closed spec fn wf(&self) -> bool {
 		self.listed() && self.tail_ok()
 	}
+}
 
+} // verus!
+
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+impl<T: Send + Sync + 'static> Writer<T> {
 	/// An empty log whose first entry gets index `start`.
-	pub fn new(start: u64) -> (writer: Self)
+	#[cfg_attr(verus_keep_ghost, verus_spec(writer =>
 		ensures
 			writer.wf(),
-	{
-		let (end, Tracked(end_perm)) = atomic::U64::new(start);
-		let (head, Tracked(head_perm)) = atomic::Ptr::new(ptr::null_mut());
-		let tracked (view_auth, view) = GhostVarAuth::new(View { end: start, head: None, segments: Map::empty(), ids: 0 });
-		let tracked (registry, _) = GhostMapAuth::new(Map::empty());
-		let ghost key = Key { head: head.id(), end: end.id(), view: view.id(), registry: registry.id() };
-		let tracked ledger = Ledger {
-			head: head_perm,
-			end: end_perm,
-			headers: Map::tracked_empty(),
-			filled: Map::tracked_empty(),
-			next: Map::tracked_empty(),
-			slots: Map::tracked_empty(),
-			registry,
-			marks: Map::tracked_empty(),
-			view,
+	))]
+	pub fn new(start: u64) -> Self {
+		proof_with!(=> Tracked(end_perm));
+		let end = atomic::U64::new(start);
+		proof_with!(=> Tracked(head_perm));
+		let head = atomic::Ptr::new(ptr::null_mut());
+		proof_decl! {
+			let tracked (view_auth, view) = GhostVarAuth::new(View { end: start, head: None, segments: Map::empty(), ids: 0 });
+			let tracked (registry, _) = GhostMapAuth::new(Map::empty());
+			let ghost key = Key { head: head.id(), end: end.id(), view: view.id(), registry: registry.id() };
+			let tracked ledger = Ledger {
+				head: head_perm,
+				end: end_perm,
+				headers: Map::tracked_empty(),
+				filled: Map::tracked_empty(),
+				next: Map::tracked_empty(),
+				slots: Map::tracked_empty(),
+				registry,
+				marks: Map::tracked_empty(),
+				view,
+			};
+		}
+		proof! {
+			assert(ledger.registry@.dom() =~= ledger.view@.segments.dom());
+		}
+		proof_decl! {
+			let tracked ledger = AtomicInvariant::new(key, ledger, LEDGER);
+			let tracked pen = Pen { view: view_auth, ids: Seq::empty(), live: Map::tracked_empty(), unwritten: Map::tracked_empty() };
+		}
+		proof_with!(ledger: Tracked(ledger));
+		let shared = Shared {
+			end,
+			base: AtomicU64::new(start),
+			head,
+			#[cfg(test)]
+			collector: None,
 		};
-		assert(ledger.registry@.dom() =~= ledger.view@.segments.dom());
-		let tracked ledger = AtomicInvariant::new(key, ledger, LEDGER);
+		proof_with!(pen: Tracked(pen));
 		Self {
-			shared: Arc::new(Shared {
-				end,
-				base: AtomicU64::new(start),
-				head,
-				ledger: Tracked(ledger),
-				#[cfg(test)]
-				collector: None,
-			}),
+			shared: Arc::new(shared),
 			segments: SmallVec::new(),
 			heap: shared_heap::<T>(),
-			pen: Tracked(Pen { view: view_auth, ids: Seq::empty(), live: Map::tracked_empty(), unwritten: Map::tracked_empty() }),
 		}
 	}
 
 	/// A reader of this log.
-	pub fn reader(&self) -> (reader: Reader<T>)
+	#[cfg_attr(verus_keep_ghost, verus_spec(reader =>
 		requires
 			self.wf(),
 		ensures
 			reader.wf(),
-	{
-		Reader { shared: self.shared.clone(), hint: None, reached: Tracked(None) }
+	))]
+	pub fn reader(&self) -> Reader<T> {
+		proof_with!(reached: Tracked(None));
+		Reader {
+			shared: self.shared.clone(),
+			hint: None,
+		}
 	}
 
 	/// One past the last committed entry: the index the next append gets.
-	pub fn end(&self) -> (end: u64)
+	///
+	/// Once the last index, `u64::MAX - 1`, is appended, this is `u64::MAX`: the end of
+	/// the index space, which no entry can take.
+	#[cfg_attr(verus_keep_ghost, verus_spec(end =>
 		requires
 			self.wf(),
 		ensures
 			end == self.committed(),
-	{
+	))]
+	pub fn end(&self) -> u64 {
 		let end;
 		open_atomic_invariant!(self.shared.ledger.borrow() => ledger => {
-			proof { self.pen.borrow().view.agree(&ledger.view); }
+			proof! { self.pen.borrow().view.agree(&ledger.view); }
 			// Relaxed: only this writer stores it.
-			end = self.shared.end.load(Tracked(&ledger.end), Ordering::Relaxed);
+			#[cfg_attr(verus_keep_ghost, verus_spec(with Tracked(&ledger.end)))]
+			let loaded = self.shared.end.load(Ordering::Relaxed);
+			end = loaded;
 		});
 		end
 	}
 
 	/// Allocate the slot the next entry goes into, if there is none, without publishing
 	/// anything.
-	pub fn reserve(&mut self)
+	///
+	/// # Panics
+	///
+	/// With "log index overflow" when there is no slot and [`Self::end`] is already
+	/// `u64::MAX`: the index space is spent.
+	#[cfg_attr(verus_keep_ghost, verus_spec(
 		requires
 			old(self).wf(),
 		ensures
 			final(self).wf(),
 			final(self).committed() == old(self).committed(),
 			final(self).has_room(),
-	{
+	))]
+	pub fn reserve(&mut self) {
 		let end = self.end();
 		let list: &[NonNull<Segment<T>>] = &self.segments;
-		let ghost tail_id = self.pen@.ids.last();
-		proof {
+		proof_decl! {
+			let ghost tail_id = self.pen@.ids.last();
+		}
+		proof! {
 			assert(list@ == items(&self.segments));
 			if list.len() > 0 {
 				assert(self.listed_at(list.len() - 1));
 			}
 		}
 		let full = if !list.is_empty() {
-			let tracked live = self.pen.borrow().live.tracked_borrow(tail_id);
-			let tail = Segment::header(list[list.len() - 1], Tracked(&live.header));
+			proof_decl! {
+				let tracked live = self.pen.borrow().live.tracked_borrow(tail_id);
+			}
+			proof_with!(Tracked(&live.header));
+			let tail = Segment::header(list[list.len() - 1]);
 			if end < tail.start + tail.capacity as u64 {
 				return;
 			}
@@ -804,30 +928,42 @@ impl<T: Send + Sync + 'static> Writer<T> {
 		if room == 0 {
 			exhausted();
 		}
-		let capacity = if capacity as u64 > room { room as usize } else { capacity };
+		let capacity = if capacity as u64 > room {
+			room as usize
+		} else {
+			capacity
+		};
 
-		let (segment, Tracked(fresh)) = Segment::new(end, capacity);
-		let tracked Fresh { header, filled, next, slots } = fresh;
-		let tracked header = Frozen::new(header);
+		proof_with!(=> Tracked(fresh));
+		let segment = Segment::new(end, capacity);
+		proof_decl! {
+			let tracked Fresh { header, filled, next, slots } = fresh;
+			let tracked header = Frozen::new(header);
+		}
 		let ptr = segment.as_ptr();
-		let ghost link = if full.is_some() { Some(tail_id) } else { None };
-		let ghost key = self.key();
-		let ghost mid = *self;
-		let tracked mut added = None;
+		proof_decl! {
+			let ghost link = if full.is_some() { Some(tail_id) } else { None };
+			let ghost key = self.key();
+			let ghost mid = *self;
+			let tracked mut added = None;
+		}
 		match full {
 			// Linked before any entry lands in it, so a reader that passes the full tail
 			// finds it.
 			Some(full) => {
 				open_atomic_invariant!(self.shared.ledger.borrow() => ledger => {
-					let ghost before = ledger;
-					proof {
+					proof_decl! {
+						let ghost before = ledger;
+					}
+					proof! {
 						self.pen.borrow().view.agree(&ledger.view);
 						self.pen.borrow().live.tracked_borrow(tail_id).find(&ledger, key, list[list.len() - 1].as_ptr());
 						assert(*full == before.view@.segments[tail_id].header);
 						assert(before.next[tail_id].id() == full.next.id());
 					}
-					full.next.store(Tracked(ledger.next.tracked_borrow_mut(tail_id)), ptr, Ordering::Release);
-					proof {
+					#[cfg_attr(verus_keep_ghost, verus_spec(with Tracked(ledger.next.tracked_borrow_mut(tail_id))))]
+					full.next.store(ptr, Ordering::Release);
+					proof! {
 						assert(before.view@.segments.contains_key(tail_id));
 						assert(ledger.head == before.head);
 						assert(ledger.next.dom() == before.next.dom());
@@ -837,22 +973,25 @@ impl<T: Send + Sync + 'static> Writer<T> {
 						added = Some(register(&mut ledger, &mut pen.view, key, before, ptr, header, filled, next, link));
 					}
 				});
-			},
+			}
 			// Published before any entry in it, so a reader that sees one can locate it.
 			None => {
 				open_atomic_invariant!(self.shared.ledger.borrow() => ledger => {
-					let ghost before = ledger;
-					proof { self.pen.borrow().view.agree(&ledger.view); }
-					self.shared.head.store(Tracked(&mut ledger.head), ptr, Ordering::Release);
-					proof {
+					proof_decl! {
+						let ghost before = ledger;
+					}
+					proof! { self.pen.borrow().view.agree(&ledger.view); }
+					#[cfg_attr(verus_keep_ghost, verus_spec(with Tracked(&mut ledger.head)))]
+					self.shared.head.store(ptr, Ordering::Release);
+					proof! {
 						let tracked pen = self.pen.borrow_mut();
 						added = Some(register(&mut ledger, &mut pen.view, key, before, ptr, header, filled, next, link));
 					}
 				});
-			},
+			}
 		}
 		let bytes = Segment::<T>::bytes(capacity);
-		proof {
+		proof! {
 			let tracked added = added.tracked_unwrap();
 			let tracked pen = self.pen.borrow_mut();
 			pen.ids = pen.ids.push(added.id);
@@ -863,7 +1002,7 @@ impl<T: Send + Sync + 'static> Writer<T> {
 		}
 		self.heap += bytes;
 		self.segments.push(segment);
-		proof {
+		proof! {
 			let len = items(&self.segments).len();
 			let new_id = mid.view().ids;
 			assert(self.view() == registered(mid.view(), ptr, self.pen@.live[new_id].header@.value(), link));
@@ -888,46 +1027,82 @@ impl<T: Send + Sync + 'static> Writer<T> {
 			} by {
 				assert(slots.contains_key(at));
 			}
+			// Spelled out: Verus fails to unfold `tail_ok` here on its own.
+			assert({
+				let list = items(&self.segments);
+				list.len() > 0 ==> {
+					let tail = self.live(list.len() - 1);
+					&&& tail.next is None
+					&&& tail.header.start + tail.filled == self.view().end
+					&&& forall|at: nat| tail.filled <= at < tail.header.capacity ==> {
+						&&& #[trigger] self.pen@.unwritten.contains_key(at)
+						&&& self.pen@.unwritten[at].ptr() == slot_ptr(tail.ptr, at as int)
+						&&& self.pen@.unwritten[at].is_uninit()
+					}
+				}
+			});
 			assert(self.tail_ok());
 		}
 	}
 
 	/// Append `value` at [`Self::end`], visible to every reader once this returns.
-	pub fn push(&mut self, value: T)
+	///
+	/// # Panics
+	///
+	/// With "log index overflow" when [`Self::end`] is already `u64::MAX`: the index
+	/// space is spent.
+	#[cfg_attr(verus_keep_ghost, verus_spec(
 		requires
 			old(self).wf(),
 		ensures
 			final(self).wf(),
-	{
+	))]
+	pub fn push(&mut self, value: T) {
 		self.reserve();
-		let ghost mid = *self;
+		proof_decl! {
+			let ghost mid = *self;
+		}
 		let end = self.end();
 		let list: &[NonNull<Segment<T>>] = &self.segments;
 		let tail = list[list.len() - 1];
-		let ghost id = self.pen@.ids.last();
-		proof {
+		proof_decl! {
+			let ghost id = self.pen@.ids.last();
+		}
+		proof! {
 			assert(list@ == items(&self.segments));
 			assert(self.listed_at(list.len() - 1));
 		}
-		let tracked live = self.pen.borrow().live.tracked_borrow(id).copy();
-		let header = Segment::header(tail, Tracked(&live.header));
+		proof_decl! {
+			let tracked live = self.pen.borrow().live.tracked_borrow(id).copy();
+		}
+		proof_with!(Tracked(&live.header));
+		let header = Segment::header(tail);
 		let at = (end - header.start) as usize;
-		proof {
+		proof! {
 			assert(*header == self.live(list.len() - 1).header);
 			assert(self.pen@.unwritten.contains_key(at as nat));
 		}
-		let tracked mut slot = self.pen.borrow_mut().unwritten.tracked_remove(at as nat);
-		ptr_mut_write(Segment::slot(tail, at), Tracked(&mut slot), value);
-		let tracked slot = Frozen::new(slot);
+		proof_decl! {
+			let tracked mut slot = self.pen.borrow_mut().unwritten.tracked_remove(at as nat);
+		}
+		let place = Segment::slot(tail, at);
+		proof_with!(Tracked(&mut slot));
+		write(place, value);
+		proof_decl! {
+			let tracked slot = Frozen::new(slot);
+		}
 		open_atomic_invariant!(self.shared.ledger.borrow() => ledger => {
-			let ghost before = ledger;
-			proof {
+			proof_decl! {
+				let ghost before = ledger;
+			}
+			proof! {
 				self.pen.borrow().view.agree(&ledger.view);
 				live.find(&ledger, self.key(), tail.as_ptr());
 			}
 			// Release so a reader, or the free, that sees the count sees the slot.
-			header.filled.store(Tracked(ledger.filled.tracked_borrow_mut(id)), at + 1, Ordering::Release);
-			proof {
+			#[cfg_attr(verus_keep_ghost, verus_spec(with Tracked(ledger.filled.tracked_borrow_mut(id))))]
+			header.filled.store(at + 1, Ordering::Release);
+			proof! {
 				ledger.slots.tracked_insert((id, at as nat), slot);
 				let view = before.view@;
 				let new_view = View {
@@ -942,10 +1117,13 @@ impl<T: Send + Sync + 'static> Writer<T> {
 			}
 		});
 		open_atomic_invariant!(self.shared.ledger.borrow() => ledger => {
-			let ghost before = ledger;
-			proof { self.pen.borrow().view.agree(&ledger.view); }
-			self.shared.end.store(Tracked(&mut ledger.end), end + 1, Ordering::Release);
-			proof {
+			proof_decl! {
+				let ghost before = ledger;
+			}
+			proof! { self.pen.borrow().view.agree(&ledger.view); }
+			#[cfg_attr(verus_keep_ghost, verus_spec(with Tracked(&mut ledger.end)))]
+			self.shared.end.store(end + 1, Ordering::Release);
+			proof! {
 				let new_view = View { end: (end + 1) as u64, ..before.view@ };
 				self.pen.borrow_mut().view.update(&mut ledger.view, new_view);
 				assert forall|i: nat| #[trigger] new_view.segments.contains_key(i) implies segment_inv(ledger, i) by {
@@ -953,7 +1131,7 @@ impl<T: Send + Sync + 'static> Writer<T> {
 				}
 			}
 		});
-		proof {
+		proof! {
 			assert(self.pen@.ids == mid.pen@.ids);
 			assert(self.view().segments[id].filled == at + 1);
 			assert(self.view().end == end + 1);
@@ -970,12 +1148,13 @@ impl<T: Send + Sync + 'static> Writer<T> {
 	/// A retired segment is freed once no read that began before this is still running,
 	/// whether or not its readers ever read again. The last segment goes only with every
 	/// entry, and its unused slots with it: the next entry starts a segment of its own.
-	pub fn evict(&mut self, index: u64)
+	#[cfg_attr(verus_keep_ghost, verus_spec(
 		requires
 			old(self).wf(),
 		ensures
 			final(self).wf(),
-	{
+	))]
+	pub fn evict(&mut self, index: u64) {
 		// Evicting to the end goes on even when nothing is left to evict, so a reserved
 		// segment no entry reached goes with it.
 		if index <= self.base() && index < self.end() {
@@ -987,10 +1166,13 @@ impl<T: Send + Sync + 'static> Writer<T> {
 		let skip = index > self.end();
 		if skip {
 			open_atomic_invariant!(self.shared.ledger.borrow() => ledger => {
-				let ghost before = ledger;
-				proof { self.pen.borrow().view.agree(&ledger.view); }
-				self.shared.end.store(Tracked(&mut ledger.end), index, Ordering::Release);
-				proof {
+				proof_decl! {
+					let ghost before = ledger;
+				}
+				proof! { self.pen.borrow().view.agree(&ledger.view); }
+				#[cfg_attr(verus_keep_ghost, verus_spec(with Tracked(&mut ledger.end)))]
+				self.shared.end.store(index, Ordering::Release);
+				proof! {
 					let new_view = View { end: index, ..before.view@ };
 					self.pen.borrow_mut().view.update(&mut ledger.view, new_view);
 					assert forall|i: nat| #[trigger] new_view.segments.contains_key(i) implies segment_inv(ledger, i) by {
@@ -998,7 +1180,7 @@ impl<T: Send + Sync + 'static> Writer<T> {
 					}
 				}
 			});
-			proof {
+			proof! {
 				assert forall|i: int| 0 <= i < items(&self.segments).len() implies #[trigger] self.listed_at(i) by {
 					assert(old(self).listed_at(i));
 				}
@@ -1008,9 +1190,9 @@ impl<T: Send + Sync + 'static> Writer<T> {
 		// The segments whose written entries all fall below `index`: a prefix, since
 		// segments are in order.
 		let list: &[NonNull<Segment<T>>] = &self.segments;
-		proof { assert(list@ == items(&self.segments)); }
+		proof! { assert(list@ == items(&self.segments)); }
 		let mut evicted = 0;
-		while evicted < list.len()
+		#[cfg_attr(verus_keep_ghost, verus_spec(
 			invariant
 				self.listed(),
 				skip ==> index == self.committed(),
@@ -1020,20 +1202,26 @@ impl<T: Send + Sync + 'static> Writer<T> {
 			ensures
 				skip ==> evicted == list.len(),
 			decreases list.len() - evicted,
-		{
-			proof { assert(self.listed_at(evicted as int)); }
-			let ghost id = self.pen@.ids[evicted as int];
-			let tracked live = self.pen.borrow().live.tracked_borrow(id);
-			let segment = Segment::header(list[evicted], Tracked(&live.header));
+		))]
+		while evicted < list.len() {
+			proof! { assert(self.listed_at(evicted as int)); }
+			proof_decl! {
+				let ghost id = self.pen@.ids[evicted as int];
+				let tracked live = self.pen.borrow().live.tracked_borrow(id);
+			}
+			proof_with!(Tracked(&live.header));
+			let segment = Segment::header(list[evicted]);
 			let filled;
 			open_atomic_invariant!(self.shared.ledger.borrow() => ledger => {
-				proof {
+				proof! {
 					self.pen.borrow().view.agree(&ledger.view);
 					live.find(&ledger, self.key(), list[evicted as int].as_ptr());
 				}
 				// Relaxed: only this writer stores it.
-				filled = segment.filled.load(Tracked(ledger.filled.tracked_borrow(id)), Ordering::Relaxed);
-				assert(filled == self.view().segments[id].filled);
+				#[cfg_attr(verus_keep_ghost, verus_spec(with Tracked(ledger.filled.tracked_borrow(id))))]
+				let loaded = segment.filled.load(Ordering::Relaxed);
+				filled = loaded;
+				proof! { assert(filled == self.view().segments[id].filled); }
 			});
 			if segment.start + filled as u64 > index {
 				break;
@@ -1044,19 +1232,30 @@ impl<T: Send + Sync + 'static> Writer<T> {
 			self.take_evicted(index);
 			return;
 		}
-		let head = if evicted < list.len() { list[evicted].as_ptr() } else { ptr::null_mut() };
-		let ghost next = if evicted < list.len() { Some(self.pen@.ids[evicted as int]) } else { None };
-		proof {
+		let head = if evicted < list.len() {
+			list[evicted].as_ptr()
+		} else {
+			ptr::null_mut()
+		};
+		proof_decl! {
+			let ghost next = if evicted < list.len() { Some(self.pen@.ids[evicted as int]) } else { None };
+		}
+		proof! {
 			if evicted < list.len() {
 				assert(self.listed_at(evicted as int));
 			}
 		}
-		let ghost pre = *self;
+		proof_decl! {
+			let ghost pre = *self;
+		}
 		open_atomic_invariant!(self.shared.ledger.borrow() => ledger => {
-			let ghost before = ledger;
-			proof { self.pen.borrow().view.agree(&ledger.view); }
-			self.shared.head.store(Tracked(&mut ledger.head), head, Ordering::Release);
-			proof {
+			proof_decl! {
+				let ghost before = ledger;
+			}
+			proof! { self.pen.borrow().view.agree(&ledger.view); }
+			#[cfg_attr(verus_keep_ghost, verus_spec(with Tracked(&mut ledger.head)))]
+			self.shared.head.store(head, Ordering::Release);
+			proof! {
 				let new_view = View { head: next, ..before.view@ };
 				self.pen.borrow_mut().view.update(&mut ledger.view, new_view);
 				assert forall|i: nat| #[trigger] new_view.segments.contains_key(i) implies segment_inv(ledger, i) by {
@@ -1064,14 +1263,16 @@ impl<T: Send + Sync + 'static> Writer<T> {
 				}
 			}
 		});
-		proof {
+		proof! {
 			assert forall|i: int| 0 <= i < items(&self.segments).len() implies #[trigger] self.listed_at(i) by {
 				assert(pre.listed_at(i));
 			}
 		}
-		let ghost mid = *self;
+		proof_decl! {
+			let ghost mid = *self;
+		}
 		let retired = drain_front(&mut self.segments, evicted);
-		proof {
+		proof! {
 			let tracked pen = self.pen.borrow_mut();
 			pen.ids = pen.ids.subrange(evicted as int, pen.ids.len() as int);
 		}
@@ -1082,7 +1283,7 @@ impl<T: Send + Sync + 'static> Writer<T> {
 		self.uncount(&retired);
 		self.retire(retired);
 		self.take_evicted(index);
-		proof {
+		proof! {
 			let len = items(&self.segments).len();
 			assert forall|i: int| 0 <= i < len implies #[trigger] self.listed_at(i) by {
 				assert(mid.listed_at(i + evicted));
@@ -1097,20 +1298,21 @@ impl<T: Send + Sync + 'static> Writer<T> {
 	}
 
 	/// The first entry not evicted.
-	#[verifier::external_body]
+	#[cfg_attr(verus_keep_ghost, verifier::external_body)]
 	pub fn base(&self) -> u64 {
 		// Relaxed: only this writer stores it.
 		self.shared.base.load(Ordering::Relaxed)
 	}
 
 	/// Stop counting the heap of segments leaving the log.
-	#[verifier::external_body]
-	fn uncount(&mut self, segments: &[NonNull<Segment<T>>])
+	#[cfg_attr(verus_keep_ghost, verifier::external_body)]
+	#[cfg_attr(verus_keep_ghost, verus_spec(
 		ensures
 			final(self).shared == old(self).shared,
 			final(self).segments == old(self).segments,
 			final(self).pen == old(self).pen,
-	{
+	))]
+	fn uncount(&mut self, segments: &[NonNull<Segment<T>>]) {
 		for segment in segments {
 			// SAFETY: still live; retired after this.
 			self.heap -= Segment::<T>::heap(unsafe { segment.as_ref() }.capacity);
@@ -1122,7 +1324,7 @@ impl<T: Send + Sync + 'static> Writer<T> {
 	/// rather than when the whole segment retires: an entry can be large, and the segment
 	/// holds up to 64. They stay in their slots until then, so a read still borrowing one
 	/// sees it whole, interior mutability included.
-	#[verifier::external_body]
+	#[cfg_attr(verus_keep_ghost, verifier::external_body)]
 	fn take_evicted(&self, index: u64) {
 		let Some(&segment) = self.segments.first() else {
 			return;
@@ -1155,7 +1357,7 @@ impl<T: Send + Sync + 'static> Writer<T> {
 	}
 
 	/// Hand segments no reader can reach any more to the epoch collector.
-	#[verifier::external_body]
+	#[cfg_attr(verus_keep_ghost, verifier::external_body)]
 	fn retire(&self, segments: SmallVec<[NonNull<Segment<T>>; 1]>) {
 		let guard = self.shared.pin();
 		for segment in segments {
@@ -1179,13 +1381,37 @@ impl<T: Send + Sync + 'static> Writer<T> {
 ///
 /// Holds nothing between reads: [`Self::read`] pins the log for as long as its
 /// [`Read`] lives.
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 pub struct Reader<T> {
 	shared: Arc<Shared<T>>,
 	/// The segment of the last entry read, and its start. Only a hint: it may have been
 	/// freed since, so a read trusts it only once the base shows it wasn't retired.
 	hint: Option<(NonNull<Segment<T>>, u64)>,
+	#[cfg(verus_keep_ghost_body)]
 	reached: Tracked<Option<Reached<T>>>,
 }
+
+/// A [`Reader`] pinned for a run of reads, from [`Reader::read`].
+///
+/// No segment it can reach is freed while it lives, so hold it only for the reads and
+/// drop it before parking.
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+pub struct Read<'a, T> {
+	reader: &'a mut Reader<T>,
+	_guard: ReadGuard,
+}
+
+/// The pin behind a [`Read`], released only after the read's accesses.
+///
+/// A wrapper rather than a `Drop` on `Read` itself, which would hold the `Reader` borrow
+/// until the end of the scope instead of the last use.
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+struct ReadGuard {
+	_pin: epoch::Guard,
+}
+
+#[cfg(verus_keep_ghost)]
+verus! {
 
 impl<T> Reader<T> {
 	/// The reader's hint, if any, names a segment the writer published.
@@ -1199,48 +1425,7 @@ impl<T> Reader<T> {
 			},
 		}
 	}
-
-	/// Pin the log for a run of reads. Entries read through the returned handle stay
-	/// alive until it drops; nothing does once it has.
-	#[expect(clippy::collapsible_if, reason = "Verus does not parse let chains")]
-	pub fn read(&mut self) -> (read: Read<'_, T>)
-		requires
-			old(self).wf(),
-		ensures
-			read.wf(),
-	{
-		let guard = self.shared.pin();
-		let base = self.shared.base.load(Ordering::Acquire);
-		// A segment is retired only once the base passes its last entry, so one whose
-		// start the base hasn't reached was not retired before this pin.
-		if let Some((_, start)) = self.hint {
-			if start < base {
-				self.hint = None;
-			}
-		}
-		Read { reader: self, _guard: ReadGuard { _pin: guard } }
-	}
 }
-
-/// A [`Reader`] pinned for a run of reads, from [`Reader::read`].
-///
-/// No segment it can reach is freed while it lives, so hold it only for the reads and
-/// drop it before parking.
-pub struct Read<'a, T> {
-	reader: &'a mut Reader<T>,
-	_guard: ReadGuard,
-}
-
-/// The pin behind a [`Read`], released only after the read's accesses.
-///
-/// A wrapper rather than a `Drop` on `Read` itself, which would hold the `Reader` borrow
-/// until the end of the scope instead of the last use.
-struct ReadGuard {
-	_pin: epoch::Guard,
-}
-
-/// A segment a walk stopped at, and what it found there.
-type Hit<T> = (NonNull<Segment<T>>, Tracked<Found<T>>);
 
 /// A segment whose written slots hold the entry a read wants, and that entry's slot.
 tracked struct Found<T> {
@@ -1263,19 +1448,53 @@ impl<T> Read<'_, T> {
 	pub closed spec fn wf(&self) -> bool {
 		self.reader.wf()
 	}
+}
 
+} // verus!
+
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+impl<T> Reader<T> {
+	/// Pin the log for a run of reads. Entries read through the returned handle stay
+	/// alive until it drops; nothing does once it has.
+	#[expect(clippy::collapsible_if, reason = "Verus does not parse let chains")]
+	#[cfg_attr(verus_keep_ghost, verus_spec(read =>
+		requires
+			old(self).wf(),
+		ensures
+			read.wf(),
+	))]
+	pub fn read(&mut self) -> Read<'_, T> {
+		let guard = self.shared.pin();
+		let base = self.shared.base.load(Ordering::Acquire);
+		// A segment is retired only once the base passes its last entry, so one whose
+		// start the base hasn't reached was not retired before this pin.
+		if let Some((_, start)) = self.hint {
+			if start < base {
+				self.hint = None;
+			}
+		}
+		Read {
+			reader: self,
+			_guard: ReadGuard { _pin: guard },
+		}
+	}
+}
+
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+impl<T> Read<'_, T> {
 	/// The committed entry at `index`, or `None` when nothing is committed there yet.
 	///
 	/// Reads at increasing indices stay in the segment last read or follow its link to
 	/// the next. Anything else, such as a reader's first read, starts from the log's
 	/// oldest segment.
 	#[expect(clippy::collapsible_if, reason = "Verus does not parse let chains")]
-	pub fn get(&mut self, index: u64) -> (entry: Result<Option<&T>, Evicted>)
+	#[cfg_attr(verus_keep_ghost, verus_spec(entry =>
 		requires
 			old(self).wf(),
 		ensures
 			final(self).wf(),
-	{
+	))]
+	pub fn get(&mut self, index: u64) -> Result<Option<&T>, Evicted> {
 		let shared = &*self.reader.shared;
 		if index < shared.base.load(Ordering::Acquire) {
 			return Err(Evicted);
@@ -1283,15 +1502,22 @@ impl<T> Read<'_, T> {
 		// The common read: the segment last read already holds `index`.
 		if let Some((segment, start)) = self.reader.hint {
 			if start <= index {
-				let tracked reached = self.reader.reached.borrow().tracked_borrow();
-				let header = Segment::header(segment, Tracked(&reached.header));
+				proof_decl! {
+					let tracked reached = self.reader.reached.borrow().tracked_borrow();
+				}
+				proof_with!(Tracked(&reached.header));
+				let header = Segment::header(segment);
 				let filled;
-				let tracked mut slot = None;
+				proof_decl! {
+					let tracked mut slot = None;
+				}
 				open_atomic_invariant!(shared.ledger.borrow() => ledger => {
-					proof { reached.find(&ledger, shared.key(), segment.as_ptr()); }
+					proof! { reached.find(&ledger, shared.key(), segment.as_ptr()); }
 					// Acquire pairs with the writer's Release of `filled`.
-					filled = header.filled.load(Tracked(ledger.filled.tracked_borrow(reached.id)), Ordering::Acquire);
-					proof {
+					#[cfg_attr(verus_keep_ghost, verus_spec(with Tracked(ledger.filled.tracked_borrow(reached.id))))]
+					let loaded = header.filled.load(Ordering::Acquire);
+					filled = loaded;
+					proof! {
 						assert(filled <= header.capacity);
 						if index < start + filled {
 							let at = (index - start) as nat;
@@ -1301,16 +1527,22 @@ impl<T> Read<'_, T> {
 					}
 				});
 				if index < start + filled as u64 {
-					let tracked slot = slot.tracked_unwrap();
+					proof_decl! {
+						let tracked slot = slot.tracked_unwrap();
+					}
 					// `filled` covers `index`, so its slot was written.
-					return Ok(Some(Segment::get(segment, index, Tracked(&reached.header), Tracked(&slot))));
+					proof_with!(Tracked(&reached.header), Tracked(&slot));
+					let entry = Segment::get(segment, index);
+					return Ok(Some(entry));
 				}
 			}
 		}
 		// Acquire pairs with the writer's Release: every slot below `end` is written.
 		let end;
 		open_atomic_invariant!(shared.ledger.borrow() => ledger => {
-			end = shared.end.load(Tracked(&ledger.end), Ordering::Acquire);
+			#[cfg_attr(verus_keep_ghost, verus_spec(with Tracked(&ledger.end)))]
+			let loaded = shared.end.load(Ordering::Acquire);
+			end = loaded;
 		});
 		if index >= end {
 			return Ok(None);
@@ -1319,22 +1551,34 @@ impl<T> Read<'_, T> {
 		// The hint's chain can end short of `index` when the writer emptied the log and
 		// started a fresh segment after this pin's check, so fall back to the head.
 		let mut hinted = None;
+		proof_decl! {
+			let tracked mut found: Option<Found<T>> = None;
+		}
 		if let Some((segment, start)) = self.reader.hint {
 			if start <= index {
-				let tracked reached = self.reader.reached.borrow().tracked_borrow();
-				hinted = Self::walk(Tracked(shared.ledger.borrow()), segment, index, Tracked(reached));
+				proof_decl! {
+					let tracked reached = self.reader.reached.borrow().tracked_borrow();
+				}
+				proof_with!(Tracked(shared.ledger.borrow()), Tracked(reached) => Tracked(walked));
+				let stop = Self::walk(segment, index);
+				hinted = stop;
+				proof! { found = walked; }
 			}
 		}
-		let (segment, Tracked(found)) = match hinted {
-			Some(found) => found,
+		let segment = match hinted {
+			Some(segment) => segment,
 			None => {
 				// Loaded under the pin: the writer moves the head before retiring what it
 				// passes.
 				let head;
-				let tracked mut first = None;
+				proof_decl! {
+					let tracked mut first = None;
+				}
 				open_atomic_invariant!(shared.ledger.borrow() => ledger => {
-					head = shared.head.load(Tracked(&ledger.head), Ordering::Acquire);
-					proof {
+					#[cfg_attr(verus_keep_ghost, verus_spec(with Tracked(&ledger.head)))]
+					let loaded = shared.head.load(Ordering::Acquire);
+					head = loaded;
+					proof! {
 						if let Some(id) = ledger.view@.head {
 							first = Some(Reached::of(&ledger, shared.key(), id));
 						}
@@ -1344,57 +1588,81 @@ impl<T> Read<'_, T> {
 					// Evicted since the base was checked.
 					return Err(Evicted);
 				};
-				let tracked first = first.tracked_unwrap();
-				match Self::walk(Tracked(shared.ledger.borrow()), head, index, Tracked(&first)) {
-					Some(found) => found,
+				proof_decl! {
+					let tracked first = first.tracked_unwrap();
+				}
+				proof_with!(Tracked(shared.ledger.borrow()), Tracked(&first) => Tracked(walked));
+				let stop = Self::walk(head, index);
+				proof! { found = walked; }
+				match stop {
+					Some(segment) => segment,
 					// Evicted since the base was checked.
 					None => return Err(Evicted),
 				}
-			},
+			}
 		};
-		let tracked Found { reached, slot } = found;
-		let start = Segment::header(segment, Tracked(&reached.header)).start;
+		proof_decl! {
+			let tracked Found { reached, slot } = found.tracked_unwrap();
+		}
+		proof_with!(Tracked(&reached.header));
+		let header = Segment::header(segment);
 		// Only as good as this pin's, which `Reader::read` checks before trusting it.
-		self.reader.hint = Some((segment, start));
-		proof {
+		self.reader.hint = Some((segment, header.start));
+		proof! {
 			self.reader.reached = Tracked(Some(reached.copy()));
 		}
 		// `filled` covers `index`, so its slot was written.
-		Ok(Some(Segment::get(segment, index, Tracked(&reached.header), Tracked(&slot))))
+		proof_with!(Tracked(&reached.header), Tracked(&slot));
+		let entry = Segment::get(segment, index);
+		Ok(Some(entry))
 	}
 
 	/// Follow links from `segment` to the one whose written slots hold `index`, if any.
-	#[verifier::exec_allows_no_decreases_clause]
-	fn walk(
-		Tracked(ledger): Tracked<&AtomicInvariant<Key, Ledger<T>, LedgerPred>>,
-		segment: NonNull<Segment<T>>,
-		index: u64,
-		Tracked(reached): Tracked<&Reached<T>>,
-	) -> (found: Option<Hit<T>>)
+	#[cfg_attr(verus_keep_ghost, verifier::exec_allows_no_decreases_clause)]
+	#[cfg_attr(verus_keep_ghost, verus_spec(hit =>
+		with
+			Tracked(ledger): Tracked<&AtomicInvariant<Key, Ledger<T>, LedgerPred>>,
+			Tracked(reached): Tracked<&Reached<T>>
+			-> found: Tracked<Option<Found<T>>>
 		requires
 			ledger.namespace() == LEDGER,
 			reached.wf(ledger.constant(), segment),
 		ensures
-			found matches Some((segment, found)) ==> found@.wf(ledger.constant(), segment, index),
-	{
+			hit matches Some(stop) ==> found@ matches Some(f) && f.wf(ledger.constant(), stop, index),
+	))]
+	fn walk(segment: NonNull<Segment<T>>, index: u64) -> Option<NonNull<Segment<T>>> {
 		let mut segment = segment;
-		let tracked mut reached = reached.copy();
-		loop
+		let mut hit = None;
+		proof_decl! {
+			let tracked mut reached = reached.copy();
+			let tracked mut found: Option<Found<T>> = None;
+		}
+		#[cfg_attr(verus_keep_ghost, verus_spec(
 			invariant
 				ledger.namespace() == LEDGER,
 				reached.wf(ledger.constant(), segment),
-		{
-			let header = Segment::header(segment, Tracked(&reached.header));
+			invariant_except_break
+				hit is None,
+			ensures
+				hit matches Some(stop) ==> found matches Some(f) && f.wf(ledger.constant(), stop, index),
+		))]
+		loop {
+			proof_with!(Tracked(&reached.header));
+			let header = Segment::header(segment);
 			if index < header.start {
-				return None;
+				break;
 			}
 			let filled;
-			let tracked mut slot = None;
+			proof_decl! {
+				let tracked mut slot = None;
+			}
 			open_atomic_invariant!(ledger => inner => {
-				proof { reached.find(&inner, ledger.constant(), segment.as_ptr()); }
+				proof! { reached.find(&inner, ledger.constant(), segment.as_ptr()); }
 				// Acquire pairs with the writer's Release of `filled`.
-				filled = header.filled.load(Tracked(inner.filled.tracked_borrow(reached.id)), Ordering::Acquire);
-				proof {
+				#[cfg_attr(verus_keep_ghost, verus_spec(with Tracked(inner.filled.tracked_borrow(reached.id))))]
+				let loaded = header.filled.load(Ordering::Acquire);
+				filled = loaded;
+				proof! {
 					assert(filled <= header.capacity);
 					if index < header.start + filled {
 						let at = (index - header.start) as nat;
@@ -1404,31 +1672,41 @@ impl<T> Read<'_, T> {
 				}
 			});
 			if index < header.start + filled as u64 {
-				let tracked found = Found { reached, slot: slot.tracked_unwrap() };
-				return Some((segment, Tracked(found)));
+				proof! {
+					found = Some(Found { reached: reached.copy(), slot: slot.tracked_unwrap() });
+				}
+				hit = Some(segment);
+				break;
 			}
 			// A segment links its successor before anything is written into it, so a
 			// segment without a link is the tail, or one evicted early with everything.
 			let next;
-			let tracked mut successor = None;
+			proof_decl! {
+				let tracked mut successor = None;
+			}
 			open_atomic_invariant!(ledger => inner => {
-				proof { reached.find(&inner, ledger.constant(), segment.as_ptr()); }
-				next = header.next.load(Tracked(inner.next.tracked_borrow(reached.id)), Ordering::Acquire);
-				proof {
+				proof! { reached.find(&inner, ledger.constant(), segment.as_ptr()); }
+				#[cfg_attr(verus_keep_ghost, verus_spec(with Tracked(inner.next.tracked_borrow(reached.id))))]
+				let loaded = header.next.load(Ordering::Acquire);
+				next = loaded;
+				proof! {
 					if let Some(id) = inner.view@.segments[reached.id].next {
 						successor = Some(Reached::of(&inner, ledger.constant(), id));
 					}
 				}
 			});
-			segment = NonNull::new(next)?;
-			proof {
+			match NonNull::new(next) {
+				Some(next) => segment = next,
+				None => break,
+			}
+			proof! {
 				reached = successor.tracked_unwrap();
 			}
 		}
+		proof_with!(|= Tracked(found));
+		hit
 	}
 }
-
-} // verus!
 
 impl<T> Segment<T> {
 	/// Heap a segment of `capacity` slots occupies: its header and slots.
@@ -1606,6 +1884,7 @@ impl<T> Clone for Reader<T> {
 			hint: self.hint,
 			// TRUSTED: outside the proof; a clone holds the same segment, so the same ghost
 			// state.
+			#[cfg(verus_keep_ghost_body)]
 			reached: Tracked::assume_new(),
 		}
 	}
