@@ -55,7 +55,11 @@ mod credit;
 pub(crate) use schedule::Priority;
 use schedule::{Config, Scheduler};
 
-use crate::clock::{Deadlines, Instant, Manual, Wall, deadline::WeakDeadlines};
+use crate::clock::{
+	Deadlines, Instant, Manual, Wall,
+	deadline::WeakDeadlines,
+	manual::{Key, Timers},
+};
 
 thread_local! {
 	static CURRENT: RefCell<Option<Rc<Runtime>>> = const { RefCell::new(None) };
@@ -114,21 +118,13 @@ struct Runtime {
 	/// The task polling right now.
 	running: Cell<usize>,
 	probe: bool,
-	time: RefCell<Time>,
+	time: RefCell<Timers>,
 	/// Queues kept in step with simulated time, until their owners drop them.
 	queues: RefCell<Vec<WeakDeadlines>>,
 	/// Awaiting [`idle`], each settled and woken once nothing else can run; held weakly.
 	idle: RefCell<Vec<std::rc::Weak<Idle>>>,
 	seed: u64,
 	rng: RefCell<rand::rngs::StdRng>,
-}
-
-struct Time {
-	clock: Manual,
-	anchor: Option<(Instant, Wall)>,
-	/// Orders timers armed for the same instant by when they were armed.
-	next: u64,
-	timers: BTreeMap<(Instant, u64), Waker>,
 }
 
 impl Runtime {
@@ -143,12 +139,7 @@ impl Runtime {
 			priorities: RefCell::default(),
 			running: Cell::new(ROOT),
 			probe: config.probe,
-			time: RefCell::new(Time {
-				clock: Manual::new(),
-				anchor: None,
-				next: 0,
-				timers: BTreeMap::new(),
-			}),
+			time: RefCell::new(Timers::new(Manual::new())),
 			queues: RefCell::new(Vec::new()),
 			idle: RefCell::new(Vec::new()),
 			seed,
@@ -168,7 +159,7 @@ impl Runtime {
 		// Timers and idle waiters may hold wakers into the dropped tasks.
 		self.queues.borrow_mut().clear();
 		self.idle.borrow_mut().clear();
-		self.time.borrow_mut().timers.clear();
+		self.time.borrow_mut().clear();
 	}
 
 	fn now(&self) -> Instant {
@@ -179,17 +170,8 @@ impl Runtime {
 	fn advance_to(&self, at: Instant) {
 		let due = {
 			let mut time = self.time.borrow_mut();
-			let now = time.clock.now();
-			time.clock.advance(at.saturating_duration_since(now));
-			let now = time.clock.now();
-			let mut due = Vec::new();
-			while let Some(entry) = time.timers.first_entry() {
-				if entry.key().0 > now {
-					break;
-				}
-				due.push(entry.remove());
-			}
-			due
+			let passed = at.saturating_duration_since(time.clock.now());
+			time.advance(passed)
 		};
 		due.into_iter().for_each(Waker::wake);
 		self.advance_queues();
@@ -218,7 +200,7 @@ impl Runtime {
 	/// Jump to the earliest armed timer or `queued`, the queues' earliest deadline.
 	/// False when nothing is armed.
 	fn advance(&self, queued: Option<Instant>) -> bool {
-		let timer = self.time.borrow().timers.first_key_value().map(|((at, _), _)| *at);
+		let timer = self.time.borrow().next();
 		match timer.into_iter().chain(queued).min() {
 			Some(at) => {
 				self.advance_to(at);
@@ -248,15 +230,7 @@ pub(crate) fn wall() -> Option<Wall> {
 }
 
 pub(crate) fn anchor() -> Option<(Instant, Wall)> {
-	current().map(|runtime| {
-		let mut time = runtime.time.borrow_mut();
-		if let Some(anchor) = time.anchor {
-			return anchor;
-		}
-		let anchor = (time.clock.now(), time.clock.wall());
-		time.anchor = Some(anchor);
-		anchor
-	})
+	current().map(|runtime| runtime.time.borrow_mut().anchor())
 }
 
 /// The run's seed, when the calling thread is inside [`run`].
@@ -913,7 +887,7 @@ pub fn yield_now() -> impl Future<Output = ()> {
 pub(crate) struct Timer {
 	run: u64,
 	at: Instant,
-	key: Option<(Instant, u64)>,
+	key: Option<Key>,
 }
 
 impl Timer {
@@ -949,28 +923,14 @@ impl Timer {
 	fn disarm(&mut self) -> Option<Waker> {
 		// A run that already ended cleared its timers.
 		let key = self.key.take()?;
-		self.runtime()?.time.borrow_mut().timers.remove(&key)
+		self.runtime()?.time.borrow_mut().disarm(key)
 	}
 
 	pub(crate) fn poll(&mut self, cx: &mut Context<'_>) -> Poll<()> {
 		let runtime = self
 			.runtime()
 			.expect("a simulated sleep polled outside its kio::clock::sim::run");
-		let mut time = runtime.time.borrow_mut();
-		if time.clock.now() >= self.at {
-			if let Some(key) = self.key.take() {
-				time.timers.remove(&key);
-			}
-			return Poll::Ready(());
-		}
-		let key = *self.key.get_or_insert_with(|| {
-			event();
-			let id = time.next;
-			time.next += 1;
-			(self.at, id)
-		});
-		time.timers.insert(key, cx.waker().clone());
-		Poll::Pending
+		runtime.time.borrow_mut().poll(self.at, &mut self.key, cx.waker())
 	}
 }
 

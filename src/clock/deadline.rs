@@ -698,6 +698,24 @@ mod tests {
 		);
 	}
 
+	/// A sleep armed behind the earliest deadline leaves the parked owner asleep: it arms
+	/// its own instant, never the reached `now` it is counted from.
+	#[test]
+	fn a_later_sleep_leaves_the_owner_parked() {
+		let deadlines = Deadlines::new(Instant::ZERO);
+		let _first = Deadline::after(&deadlines, Duration::from_secs(1));
+		let (wakes, owner) = counter();
+		deadlines.advance(Instant::ZERO);
+		assert_eq!(
+			deadlines.park(&owner),
+			Some(Instant::ZERO.saturating_add(Duration::from_secs(1)))
+		);
+
+		let _entered = deadlines.enter();
+		let _sleep = crate::clock::sleep(Duration::from_secs(2));
+		assert_eq!(wakes.count.load(Ordering::SeqCst), 0, "a later sleep woke the owner");
+	}
+
 	/// Entering nests, and dropping a guard restores the queue entered before it.
 	#[test]
 	fn entering_nests() {

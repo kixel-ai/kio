@@ -1,0 +1,33 @@
+# Lab spikes for kio's state-machine designs: never published, so nothing here is API.
+[package]
+name = "kio-reactor-lab"
+description = "Experiments on kio's state-machine designs; not published."
+publish = false
+
+version = "0.0.0"
+edition = "2024"
+rust-version.workspace = true
+
+[features]
+# Expose each `#[reactor]` action and invariant on its own, for the explorer.
+sim = []
+
+[dependencies]
+kio = { path = "../.." }
+kio-macros = { workspace = true, features = ["unstable-reactor"] }
+rand = { workspace = true }
+
+[dev-dependencies]
+# The tests and examples explore, so they need the `sim` surface.
+kio-reactor-lab = { path = ".", features = ["sim"] }
+# Compiles each `#[reactor]` mistake in `tests/ui/` and checks the diagnostic it reports.
+trybuild = "1"
+
+# Compile-fail fixtures are loaded by trybuild, and `tests/ui.rs` reaches trybuild through
+# kio-macros' harness by `#[path]`, which cargo-shear does not follow.
+[package.metadata.cargo-shear]
+ignored = ["trybuild"]
+ignored-paths = ["tests/ui/*.rs"]
+
+[lints]
+workspace = true
