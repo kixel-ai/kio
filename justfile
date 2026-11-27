@@ -5,7 +5,7 @@ default:
     @just --list
 
 # Lint the workspace, feature matrix, unused dependencies, rustdoc, workflows, TOML, Nix, and quest tree.
-check:
+check: coroutines
     cargo shear --locked --deny-warnings
     cargo clippy --locked --workspace --all-features --all-targets -- -D warnings
     cargo clippy --locked -p kio --no-default-features -- -D warnings
@@ -16,6 +16,36 @@ check:
     taplo format --check
     nixfmt --check flake.nix nix/verus.nix
     quest check
+
+# Fail if kio without its `async` feature compiles a coroutine: an `async fn` body, `async` block, or `async` closure.
+coroutines:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # A stable path keeps rustc's args unchanged, so an unchanged rerun reuses the build
+    # and the MIR it left behind instead of adding a build to the cache.
+    mkdir -p target/coroutines
+    # The bare default build, plus the features a poll-only consumer enables; `runtime`
+    # swaps out the host-clock fallback, so neither build covers the other.
+    for features in default macros,runtime,manual,serde; do
+        # `--emit` splits on commas, so the file name cannot hold them.
+        mir="target/coroutines/${features//,/+}.mir"
+        # Only the final crate gets `--emit`, so dependencies build as usual.
+        cargo rustc --locked -p kio --lib --no-default-features --features "${features#default}" -- --emit "mir=$mir"
+        if [[ ! -s "$mir" ]]; then
+            echo "error: no MIR at $mir; run \`cargo clean -p kio\` to rebuild it" >&2
+            exit 1
+        fi
+        # rustc names each coroutine by its body, as `{async fn body of queue::Queue<T>::pop()}`.
+        # Match the prefix only: a nested name holds braces, as `f::{closure#0}::g()`.
+        found=$(grep -oE '\{async (fn body of |block@|closure@)[^ ;,]*' "$mir" | sed -E 's/\}[^}]*$/}/' | sort -u || true)
+        if [[ -n "$found" ]]; then
+            echo "error: kio --features '$features' compiles coroutines without its async feature:" >&2
+            echo "$found" >&2
+            echo "Gate each behind the feature, or generate it from a poll with #[kio::wrapper]." >&2
+            exit 1
+        fi
+        echo "kio --features '$features': no coroutines"
+    done
 
 # Run unit, doc, and trybuild UI tests across the workspace, failing on any host-clock timer.
 test *args:
@@ -57,6 +87,25 @@ release-fresh:
         echo "error: this release PR is built on ${parent}, but main is at ${main}; wait for release.yml to regenerate it" >&2
         exit 1
     fi
+
+# Fail a breaking PR title (`type!:` or `type(scope)!:`) whose diff from `base` changes no MIGRATE.md.
+[positional-arguments]
+migrate-check title base="origin/main":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Positional, so a hostile title is never spliced into the script.
+    title=$1 base=$2
+    if ! [[ $title =~ ^[A-Za-z]+(\([^\)]*\))?!: ]]; then
+        echo "not breaking: $title"
+        exit 0
+    fi
+    changed=$(git diff --name-only "$base...HEAD")
+    if grep -qxE '(macros/)?MIGRATE\.md' <<<"$changed"; then
+        echo "breaking, and MIGRATE.md changed: $title"
+        exit 0
+    fi
+    echo "error: '$title' marks a breaking change, but the diff from $base changes neither MIGRATE.md nor macros/MIGRATE.md" >&2
+    exit 1
 
 # Validate kio-reactor-lab's explored SendCredit runs with TLC, and model-check the split spec they follow.
 lab-tlc seeds="200":

@@ -12,6 +12,7 @@ Have at least these sections:
 - **Problem**: a summary of the problem and why this PR is needed.
 - **Approach**: a summary of the approach taken to solve the problem.
 - **Impact**: a bullet point for every public API change. A breaking one says how to migrate, and the PR title marks it with `!` (`feat!: ...`).
+  A `!` title also needs an entry in `MIGRATE.md` (or `macros/MIGRATE.md` for `kio-macros`); `just migrate-check "<title>"` checks a committed branch against `origin/main`.
 - **Alternatives**: any alternative approaches considered.
 - **Follow-ups**: any issues encountered or quests created.
 
