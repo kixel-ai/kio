@@ -130,14 +130,17 @@ jobs:
             if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" >/dev/null 2>&1; then
               return 0
             fi
-            crate_file=$(mktemp)
-            status=$(curl -sL -o "$crate_file" -w '%{http_code}' -A "kixel-ai/kio release" \
-              "https://crates.io/api/v1/crates/${crate}/${version}/download")
+            status=$(curl -s -o /dev/null -w '%{http_code}' -A "kixel-ai/kio release" \
+              "https://crates.io/api/v1/crates/${crate}/${version}")
             case "$status" in
               404) echo "${crate} ${version} is not published, so there is nothing to tag"; return 0 ;;
               200) ;;
               *) echo "crates.io answered ${status} for ${crate} ${version}" >&2; return 1 ;;
             esac
+            # Published, so a failed download is an error, not a missing version.
+            crate_file=$(mktemp)
+            curl -sSfL -o "$crate_file" -A "kixel-ai/kio release" \
+              "https://crates.io/api/v1/crates/${crate}/${version}/download"
             sha=$(tar -xzO -f "$crate_file" "${crate}-${version}/.cargo_vcs_info.json" | jq -er .git.sha1)
             gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" -f ref="refs/tags/${tag}" -f sha="$sha" >/dev/null
             echo "tagged ${tag} at ${sha}"
