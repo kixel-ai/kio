@@ -149,6 +149,9 @@ impl Timers {
 			return std::task::Poll::Ready(());
 		}
 		let key = *key.get_or_insert_with(|| {
+			// Arming a timer is progress a simulator probe watches for.
+			#[cfg(feature = "sim")]
+			crate::clock::sim::event();
 			self.serial += 1;
 			(at, self.serial - 1)
 		});

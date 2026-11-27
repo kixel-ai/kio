@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "macros", "lab/pure-machine", "lab/reactor"]
+members = [".", "macros", "lab/adversarial", "lab/pure-machine", "lab/reactor"]
 resolver = "2"
 
 [workspace.package]

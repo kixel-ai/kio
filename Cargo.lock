@@ -626,6 +626,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kio-adversarial-lab"
+version = "0.0.0"
+dependencies = [
+ "kio",
+ "rand",
+]
+
+[[package]]
 name = "kio-macros"
 version = "0.1.0"
 dependencies = [

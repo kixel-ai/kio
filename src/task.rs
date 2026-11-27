@@ -110,6 +110,9 @@ pub struct Tasks<T> {
 	next: usize,
 	/// Stamped on each occupant, so a [`TaskKey`] outliving its task names nothing.
 	generation: u64,
+	/// Parallel to `children`.
+	#[cfg(feature = "sim")]
+	sim: Vec<Sim>,
 }
 
 /// Names a task [`insert`](Tasks::insert)ed into a set, until it finishes or is
@@ -126,6 +129,14 @@ struct Occupant<T> {
 	task: T,
 	park: Park,
 	generation: u64,
+}
+
+/// What the simulator keeps for a slot's occupant, apart from the slab so a push in a
+/// build with `sim` stays cheap.
+#[cfg(feature = "sim")]
+struct Sim {
+	/// Where it was pushed, to blame it for a lost wakeup.
+	location: &'static std::panic::Location<'static>,
 }
 
 /// Waker state shared with every slot; deliberately `T`-free so the wakers
@@ -284,6 +295,8 @@ impl Wake for SlotWaker {
 	}
 
 	fn wake_by_ref(self: &Arc<Self>) {
+		#[cfg(feature = "sim")]
+		crate::clock::sim::event();
 		// An already-set bit means the slot is queued for the next pass and the
 		// owner was already nudged: a burst of wakes is one bit and one nudge.
 		let index = (self.slot % CHUNK_SLOTS) / WORD_BITS;
@@ -321,6 +334,8 @@ impl<T> Tasks<T> {
 			scratch: Vec::new(),
 			next: 0,
 			generation: 0,
+			#[cfg(feature = "sim")]
+			sim: Vec::new(),
 		}
 	}
 
@@ -343,12 +358,14 @@ impl<T> Tasks<T> {
 	///
 	/// Wakes the owner, so a task pushed between polls (from another arm of the
 	/// owner's own poll, say) still gets started.
+	#[cfg_attr(feature = "sim", track_caller)]
 	pub fn push(&mut self, task: T) {
 		self.insert(task);
 	}
 
 	/// Add a task like [`push`](Self::push), returning the key that
 	/// [`remove`](Self::remove)s it before it finishes.
+	#[cfg_attr(feature = "sim", track_caller)]
 	pub fn insert(&mut self, task: T) -> TaskKey {
 		let index = match self.free.pop() {
 			Some(index) => index,
@@ -372,6 +389,16 @@ impl<T> Tasks<T> {
 			park: Park::default(),
 			generation: self.generation,
 		});
+		#[cfg(feature = "sim")]
+		{
+			let sim = Sim {
+				location: std::panic::Location::caller(),
+			};
+			match self.sim.get_mut(index) {
+				Some(slot) => *slot = sim,
+				None => self.sim.push(sim),
+			}
+		}
 		self.len += 1;
 		// Queue the first poll exactly the way any wake would.
 		self.wakers[index].wake_by_ref();
@@ -550,6 +577,13 @@ impl<T: Task> Tasks<T> {
 			scratch.sort_unstable_by_key(|&(word, _)| word);
 		}
 
+		#[cfg(feature = "sim")]
+		if crate::clock::sim::probing() {
+			self.probe(done);
+			self.scratch = scratch;
+			return;
+		}
+
 		let slots = self.children.len();
 		let mut advanced = false;
 		// Visit `next..slots`, then wrap through `0..next`. The snapshot stays
@@ -602,6 +636,33 @@ impl<T: Task> Tasks<T> {
 			}
 		}
 		self.scratch = scratch;
+	}
+
+	/// [`pass`](Self::pass) while the simulator probes for lost wakeups: every child,
+	/// once each in slot order, blaming the first that progresses though nothing woke it.
+	#[cfg(feature = "sim")]
+	fn probe(&mut self, done: &mut impl FnMut(T, T::Output)) {
+		for index in 0..self.children.len() {
+			let Some(occupant) = self.children[index].as_mut() else {
+				continue;
+			};
+			let events = crate::clock::sim::events();
+			let cx = Context::from_waker(&self.wakers[index]);
+			let child_waiter = occupant.park.hold(&cx);
+			let poll = {
+				let _scope = crate::coop::child();
+				occupant.task.poll(child_waiter)
+			};
+			if poll.is_ready() || crate::clock::sim::events() != events {
+				crate::clock::sim::blame(self.sim[index].location, index);
+			}
+			if let Poll::Ready(output) = poll {
+				let occupant = self.children[index].take().expect("polled slot is occupied");
+				self.free.push(index);
+				self.len -= 1;
+				done(occupant.task, output);
+			}
+		}
 	}
 }
 

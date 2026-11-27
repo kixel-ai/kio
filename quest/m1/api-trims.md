@@ -9,7 +9,7 @@ kio's public surface names nothing from MoQ, landed as one breaking change befor
 The 2026-11-26 code audit found two, both public:
 
 - `Wall::MOQ_EPOCH` (`src/clock/wall.rs`): MoQ's 2020-01-01 media epoch. Several `moq-dev/moq` crates call it (hang, moq-mux, moq-gst, moq-hls, and moq-net at the time of the audit); grep `moq-dev/moq` main for every caller when migrating. Remove it and make `Wall::from_unix_secs` (today `pub(crate) const fn`) public, so MoQ defines `const EPOCH: Wall = Wall::from_unix_secs(1_577_836_800)` once in its own lowest crate.
-- `MOQ_SIM_SEED` (`src/clock/sim.rs`): the simulator's replay seed variable, beside `KIO_DENY_HOST_TIMERS`. Rename it to `KIO_SIM_SEED` with no alias, and update [adversarial-sim](/quest/m9/kio-state-machines/adversarial-sim.md), which names it. Grep `moq-dev/moq` for any script, workflow, or doc that sets it.
+- `MOQ_SIM_SEED` (`src/clock/sim.rs`): the simulator's replay seed variable, beside `KIO_DENY_HOST_TIMERS`. Rename it to `KIO_SIM_SEED` with no alias, and update every doc and message that names it, such as the replay hint a failed `sim::run` prints. Grep `moq-dev/moq` for any script, workflow, or doc that sets it.
 
 Decided 2026-11-26 (maintainer, /quest-run): keep the quest.
 
