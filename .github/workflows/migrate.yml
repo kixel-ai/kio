@@ -24,8 +24,10 @@ jobs:
       - uses: taiki-e/install-action@893d6ee8d714b6c7dfe2bcd94e5759e9a7958a7e # v2.90.10
         with:
           tool: just
-      - run: just migrate-check "$(git log -1 --format=%s)" HEAD~1
-      - if: failure()
+      - id: check
+        run: just migrate-check "$(git log -1 --format=%s)" HEAD~1
+      # Only the check itself, so a setup failure is not reported as a missing entry.
+      - if: failure() && steps.check.outcome == 'failure'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
