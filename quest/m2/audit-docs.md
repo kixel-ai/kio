@@ -13,7 +13,7 @@ Baseline: `866ef06`, the extraction from `moq-dev/moq`, read by the 2026-11-26 r
 - `macros/MIGRATE.md`: semver-checks sees a proc macro's name, not the syntax it accepts or the code it expands to, so read `git diff <last kio-macros release> -- macros/` for those and match each break to an entry. `kio-macros` had no crates.io release at the 2026-11-26 run, so there is nothing to diff until one ships.
 - `CHANGELOG.md` entries through 0.6.4 link to `moq-dev/moq` compare views and PRs on purpose; that history stays there.
 - Run rustdoc with `-W rustdoc::all -A rustdoc::private_doc_tests -W missing_docs`, once with every feature and once with none; `private_doc_tests` flags `src/task.rs`'s module example on purpose.
-- Out of scope: `AGENTS.md` and `CONTRIBUTING.md` (the instructions audit), and MoQ names in public API (`MOQ_SIM_SEED`, `Wall::MOQ_EPOCH`), which the code audit owns.
+- Out of scope: `AGENTS.md` and `CONTRIBUTING.md` (the instructions audit).
 
 ## Audit
 

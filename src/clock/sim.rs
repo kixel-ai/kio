@@ -18,7 +18,7 @@
 //! [`drive`](crate::clock::drive) polls one with the simulated instant, and [`attach`]
 //! keeps a [`Deadlines`] queue in step.
 //!
-//! Each run seeds [`rng`](crate::clock::rng) and [`seed`](crate::clock::seed) from `MOQ_SIM_SEED`,
+//! Each run seeds [`rng`](crate::clock::rng) and [`seed`](crate::clock::seed) from `KIO_SIM_SEED`,
 //! or at random when it is unset, and a run that panics prints its seed and schedule settings,
 //! so setting all of them as printed replays the run bit-exact.
 //!
@@ -262,14 +262,14 @@ impl Rng {
 	}
 }
 
-/// The seed `MOQ_SIM_SEED` names, or a random one when it is unset.
+/// The seed `KIO_SIM_SEED` names, or a random one when it is unset.
 fn seed_from_env() -> u64 {
-	match std::env::var("MOQ_SIM_SEED") {
+	match std::env::var("KIO_SIM_SEED") {
 		Ok(seed) => seed
 			.parse()
-			.unwrap_or_else(|_| panic!("MOQ_SIM_SEED must be a u64, not {seed:?}")),
+			.unwrap_or_else(|_| panic!("KIO_SIM_SEED must be a u64, not {seed:?}")),
 		Err(std::env::VarError::NotPresent) => rand::random(),
-		Err(err) => panic!("MOQ_SIM_SEED: {err}"),
+		Err(err) => panic!("KIO_SIM_SEED: {err}"),
 	}
 }
 
@@ -404,7 +404,7 @@ impl Drop for Enter {
 ///
 /// When called inside another `run`, and when every task is parked with no timer
 /// armed and none awaits [`idle`], which is a deadlock. Also when one root poll
-/// exceeds the ready kio poll limit, a detached task panics, `MOQ_SIM_SEED` is
+/// exceeds the ready kio poll limit, a detached task panics, `KIO_SIM_SEED` is
 /// not a `u64`, or `KIO_SIM_SCHEDULE` or `KIO_SIM_PROBE` is malformed, and on a lost
 /// wakeup while probing.
 #[track_caller]
@@ -414,12 +414,12 @@ pub fn run<F: IntoFuture>(future: F) -> F::Output {
 }
 
 /// [`run`] with [`rng`](crate::clock::rng) and [`seed`](crate::clock::seed) drawn from
-/// `seed`, ignoring `MOQ_SIM_SEED`: for a sweep that derives each case's seed itself,
+/// `seed`, ignoring `KIO_SIM_SEED`: for a sweep that derives each case's seed itself,
 /// so one setting replays a case.
 ///
 /// # Panics
 ///
-/// As [`run`] does, except on `MOQ_SIM_SEED`.
+/// As [`run`] does, except on `KIO_SIM_SEED`.
 #[track_caller]
 pub fn run_seeded<F: IntoFuture>(seed: u64, future: F) -> F::Output {
 	enter(seed, None, Config::from_env(), future)
@@ -435,7 +435,7 @@ fn run_with<F: IntoFuture>(seed: u64, config: Config, future: F) -> F::Output {
 #[track_caller]
 fn enter<F: IntoFuture>(seed: u64, replay: Option<u64>, config: Config, future: F) -> F::Output {
 	let location = Location::caller();
-	let replay = replay.map(|seed| format!("MOQ_SIM_SEED={seed}{config}"));
+	let replay = replay.map(|seed| format!("KIO_SIM_SEED={seed}{config}"));
 	let runtime = Runtime::enter(seed, config);
 	let enter = Enter { replay };
 

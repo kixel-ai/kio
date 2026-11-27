@@ -21,7 +21,7 @@ Baseline from the 2026-11-26 run, the first since kio left `moq-dev/moq`:
 - Check first:
   - `CONTRIBUTING.md`'s Landing section: [required-check](/quest/m1/required-check.md)'s merge queue retires its "No ruleset requires `check` yet" sentence and `--squash`.
   - `AGENTS.md`'s host-clock test rule, now that `just test` sets `KIO_DENY_HOST_TIMERS=1` (kixel-ai/kio#4): whether it can shrink to naming `kio::clock::host_time()`.
-  - `AGENTS.md`'s "no coroutines" promise, which only [coroutines-check](/quest/m1/coroutines-check.md) enforces.
+  - `AGENTS.md`'s "no coroutines" promise, now enforced by `just coroutines`: whether the rule can shrink to naming that check.
 
 ## Audit
 
