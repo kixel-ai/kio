@@ -22,6 +22,7 @@ Today `main`'s only ruleset is the org's `Pull request` rule, so `quest merge` l
 Follow kixel-ai/quest, the nearest kixel-ai repository on a merge queue:
 - `queue.yml` runs on `merge_group` and calls `kixel-ai/kio/.github/workflows/queue-build.yml@main`.
   - That workflow runs what `check.yml`'s two jobs run today on `[self-hosted, kio-queue]`: `just ci`, and `just verify` in `nix develop .#verus`. It then posts the required `Queue` check run.
+  - `just ci` includes `release-fresh`, which fails a release PR whose commit is not on `main`'s tip but acts only on `pull_request` runs. Once PRs run no CI, teach it the `merge_group` event (the PR number and head sha are in the entry's `refs/heads/gh-readonly-queue/main/pr-<n>-<sha>` ref), or a stale release PR can land again.
   - The `kio-queue` group admits only that workflow at `refs/heads/main`, so a PR's edit to `queue-build.yml` runs only after it lands.
   - The group's allowlist names the workflow that defines a job, not the event that called it. A PR's workflow could still call `queue-build.yml@main` and reach the runner before anyone queues the PR.
   - So every job on `kio-queue` also needs `if: github.event_name == 'merge_group'`; for the report job, that is `always() && github.event_name == 'merge_group'`. Quest's `queue-build.yml` does the same.

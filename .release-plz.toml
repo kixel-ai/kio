@@ -1,0 +1,23 @@
+[workspace]
+# release.yml publishes and tags; release-plz only opens the release PR.
+git_release_enable = false
+
+# `kio-v<version>`, release-plz's default, would also match `kio-macros-v<version>` when it
+# looks for kio's last release, and drop every kio change before kio-macros's tag.
+[[package]]
+name = "kio-macros"
+git_tag_name = "macros-v{{ version }}"
+
+[changelog]
+# Replaces release-plz's default parsers to leave out commits no user reads.
+commit_parsers = [
+    # 0.6.3 and 0.6.4 already shipped it as a release-branch backport.
+    { message = "^perf\\(kio\\): add a contended channel bench", skip = true },
+    # Dependency bumps change what a user builds.
+    { message = "^chore\\(deps\\)", group = "changed" },
+    { message = "^(chore|ci|test|build|bench|quest|style|[Mm]erge)", skip = true },
+    { message = "^feat", group = "added" },
+    { message = "^fix", group = "fixed" },
+    { message = "^(perf|refactor)", group = "changed" },
+    { message = "^.*", group = "other" },
+]

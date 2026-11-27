@@ -1,8 +1,9 @@
 name: Release
 
-# Publishes kio-macros then kio to crates.io when main carries a version crates.io lacks.
-# Packaging runs in an unprivileged job before publishing so build scripts never run beside
-# the OIDC token.
+# Publishes kio-macros then kio to crates.io when main carries a version crates.io lacks, tags
+# what it published, then has release-plz open or regenerate the release PR that bumps those
+# versions and writes the changelogs. Packaging runs in an unprivileged job before publishing
+# so build scripts never run beside the OIDC token.
 on:
   push:
     branches: [main]
@@ -21,6 +22,8 @@ jobs:
     outputs:
       macros: ${{ steps.plan.outputs.macros }}
       kio: ${{ steps.plan.outputs.kio }}
+      macros_version: ${{ steps.plan.outputs.macros_version }}
+      kio_version: ${{ steps.plan.outputs.kio_version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -44,8 +47,12 @@ jobs:
           kio_ver=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "kio") | .version')
           macros=$(check_crate kio-macros "$macros_ver")
           kio=$(check_crate kio "$kio_ver")
-          echo "macros=$macros" >> "$GITHUB_OUTPUT"
-          echo "kio=$kio" >> "$GITHUB_OUTPUT"
+          {
+            echo "macros=$macros"
+            echo "kio=$kio"
+            echo "macros_version=$macros_ver"
+            echo "kio_version=$kio_ver"
+          } >> "$GITHUB_OUTPUT"
 
   package:
     needs: plan
@@ -100,3 +107,54 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: cargo publish --locked --no-verify -p kio
+
+  # Tags what this run published, which is where release-plz starts the next changelog. The job
+  # holds no crates.io credential, only the token to create a tag.
+  tag:
+    needs: [plan, publish-macros, publish-kio]
+    if: ${{ !cancelled() && (needs.publish-macros.result == 'success' || needs.publish-kio.result == 'success') }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          MACROS: ${{ needs.publish-macros.result == 'success' && format('macros-v{0}',needs.plan.outputs.macros_version) || '' }}
+          KIO: ${{ needs.publish-kio.result == 'success' && format('kio-v{0}', needs.plan.outputs.kio_version) || '' }}
+        run: |
+          for tag in $MACROS $KIO; do
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" -f ref="refs/tags/${tag}" -f sha="${GITHUB_SHA}" >/dev/null
+            echo "tagged ${tag}"
+          done
+
+  # Opens, or regenerates, the release PR from main's commits since each crate's last tag. It
+  # runs after publishing, so the tags and crates.io already hold what main's versions name.
+  # The App key lives in the `release-pr` environment, which only main can deploy to, so a pull
+  # request's workflow never reads it.
+  pr:
+    needs: [plan, tag]
+    if: ${{ !cancelled() && !failure() && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    environment: release-pr
+    permissions:
+      contents: read
+    steps:
+      # An App token, since GITHUB_TOKEN cannot open a PR here, and a PR it opened would not run
+      # check.yml.
+      - id: token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
+        with:
+          client-id: ${{ secrets.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Every tag and commit, since release-plz finds a crate's last release by its tag.
+          fetch-depth: 0
+          # release-plz pushes the release branch with this credential.
+          token: ${{ steps.token.outputs.token }} # zizmor: ignore[artipacked]
+      - uses: ./.github/actions/nix
+      - run: nix develop .#release --command just release-pr
+        env:
+          GITHUB_TOKEN: ${{ steps.token.outputs.token }}

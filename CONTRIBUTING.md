@@ -21,6 +21,12 @@ A PR lands on the maintainer's pick once CI's `check` and `verify` jobs and its 
 No ruleset requires either job yet, so a pending run does not hold the merge: queue only once both pass.
 Ask before using the admin bypass of `main`'s rulesets.
 
+# Releasing
+
+Nobody edits a version or `CHANGELOG.md` by hand. Every push to `main` runs `release.yml`, whose last job has release-plz open or regenerate one release PR (`release-plz-*` branch, titled `chore: release`) from the squash titles since each crate's last tag: it bumps `kio` and `kio-macros`, writes `CHANGELOG.md` and `macros/CHANGELOG.md`, and takes a breaking bump from a `!` title or a break `cargo-semver-checks` finds. Merging that PR is the release: the same workflow then publishes to crates.io and tags `kio-v<version>` and `macros-v<version>` (not `kio-macros-v`, which release-plz would also read as a `kio` tag), which is where the next changelog starts. Write each squash title for the changelog reader, and mark a change `chore`, `ci`, `test`, `build`, `bench`, or `quest` only when users should not read it (`.release-plz.toml` leaves those out).
+
+`just ci` fails a release PR whose commit does not sit on `main`'s tip, so it cannot merge before `release.yml` regenerates it; re-run `release.yml` on `main` if that never happens. `just release-pr` is the command CI runs, in `nix develop .#release`.
+
 # Verified code
 
 `src/log.rs` carries a Verus proof of its append and read paths, written in Verus's attribute syntax so the file stays plain Rust. Only Verus sets the `verus_keep_ghost` cfg that turns the proof on, and only the `verify/` package, which builds kio's sources for `just verify`, depends on `vstd` and opts in to `cargo verus`. So plain builds, `just ci`, and downstream crates, Verus ones included, compile no Verus crate for kio, and editing the log needs no Verus. Keep `verify/Cargo.toml`'s dependencies in step with kio's non-optional ones. CI's `verify` job proves it; to run that locally, `nix develop .#verus --command just verify` (Linux only).

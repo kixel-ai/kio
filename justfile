@@ -37,8 +37,26 @@ miri:
     # crossbeam-epoch's collector violates Stacked Borrows and never frees at exit.
     MIRIFLAGS="-Zmiri-tree-borrows -Zmiri-ignore-leaks" run cargo miri test --locked -p kio --lib log::
 
-# Run what CI runs: lint, then test.
-ci: check test
+# Run what CI runs: lint, test, then the release PR freshness check.
+ci: check test release-fresh
+
+# Open or regenerate the release PR from main's commits since each crate's last tag. CI runs it from release.yml with a token that can open PRs; run it in `nix develop .#release`.
+release-pr:
+    release-plz release-pr --git-token "$GITHUB_TOKEN"
+
+# Fail a release PR whose commit does not sit directly on main's tip, so it cannot merge before release.yml regenerates it from the newest main. Does nothing outside a pull_request run of a `release-plz-*` branch.
+release-fresh:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [[ "${GITHUB_EVENT_NAME:-}" == pull_request && "${GITHUB_HEAD_REF:-}" == release-plz-* ]] || exit 0
+    head=$(jq -r .pull_request.head.sha "$GITHUB_EVENT_PATH")
+    main=$(git ls-remote origin refs/heads/main | cut -f1)
+    git fetch --quiet --depth=2 origin "$head"
+    parent=$(git rev-parse FETCH_HEAD^)
+    if [[ "$parent" != "$main" ]]; then
+        echo "error: this release PR is built on ${parent}, but main is at ${main}; wait for release.yml to regenerate it" >&2
+        exit 1
+    fi
 
 # Validate kio-reactor-lab's explored SendCredit runs with TLC, and model-check the split spec they follow.
 lab-tlc seeds="200":

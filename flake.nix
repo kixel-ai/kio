@@ -63,6 +63,13 @@
           # The default shell plus Verus, for `just verify`. Separate so the merge gate's
           # shell doesn't download Verus's toolchain; Linux only, as Verus's release is.
           // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+            # The default shell plus release-plz and cargo-semver-checks, for `just release-pr`.
+            release = pkgs.mkShell {
+              packages = devPackages ++ [
+                pkgs.release-plz
+                pkgs.cargo-semver-checks
+              ];
+            };
             verus = pkgs.mkShell { packages = devPackages ++ [ verus ]; };
             # lab/pure-machine's Charon, Aeneas, and Lean, Linux only as Aeneas's release is.
             prove = import ./lab/pure-machine/prove.nix { inherit pkgs; };
