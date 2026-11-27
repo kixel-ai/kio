@@ -1,0 +1,16 @@
+# Lab spikes for kio's state-machine designs: never published, so nothing here is API.
+[package]
+name = "kio-adversarial-lab"
+description = "Experiments on kio's state-machine designs; not published."
+publish = false
+
+version = "0.0.0"
+edition = "2024"
+rust-version.workspace = true
+
+[dependencies]
+kio = { path = "../..", features = ["async", "sim"] }
+rand = { workspace = true }
+
+[lints]
+workspace = true

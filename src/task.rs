@@ -137,9 +137,6 @@ struct Occupant<T> {
 struct Sim {
 	/// Where it was pushed, to blame it for a lost wakeup.
 	location: &'static std::panic::Location<'static>,
-	/// Its rank when the simulator schedules children by priority, drawn at its first
-	/// scheduled pass in a run, with that run's id, so a set outliving a run redraws.
-	priority: Option<(u64, crate::clock::sim::Priority)>,
 }
 
 /// Waker state shared with every slot; deliberately `T`-free so the wakers
@@ -153,13 +150,6 @@ struct Shared {
 	/// The chunks with a marked summary: bit `c % 64` for chunk `c`. The top
 	/// level of the wake index, so a poll skips the chunks nothing woke.
 	ready: AtomicU64,
-	/// The slot the simulator is polling, or `usize::MAX`, so its waker can tell a
-	/// self-wake apart: a sibling may have set the slot's wake bit already.
-	#[cfg(feature = "sim")]
-	polling: std::sync::atomic::AtomicUsize,
-	/// Whether the polled slot's waker fired during its poll.
-	#[cfg(feature = "sim")]
-	self_woke: AtomicBool,
 }
 
 impl Shared {
@@ -306,14 +296,7 @@ impl Wake for SlotWaker {
 
 	fn wake_by_ref(self: &Arc<Self>) {
 		#[cfg(feature = "sim")]
-		{
-			crate::clock::sim::event();
-			// Relaxed, and only on a thread polling a simulated task: a wake from a
-			// worker thread mid-poll is no yield to detect.
-			if self.shared.polling.load(Ordering::Relaxed) == self.slot && crate::coop::polling() {
-				self.shared.self_woke.store(true, Ordering::Relaxed);
-			}
-		}
+		crate::clock::sim::event();
 		// An already-set bit means the slot is queued for the next pass and the
 		// owner was already nudged: a burst of wakes is one bit and one nudge.
 		let index = (self.slot % CHUNK_SLOTS) / WORD_BITS;
@@ -347,10 +330,6 @@ impl<T> Tasks<T> {
 				parent: Mutex::new(None),
 				pending: AtomicBool::new(false),
 				ready: AtomicU64::new(0),
-				#[cfg(feature = "sim")]
-				polling: std::sync::atomic::AtomicUsize::new(usize::MAX),
-				#[cfg(feature = "sim")]
-				self_woke: AtomicBool::new(false),
 			}),
 			scratch: Vec::new(),
 			next: 0,
@@ -414,7 +393,6 @@ impl<T> Tasks<T> {
 		{
 			let sim = Sim {
 				location: std::panic::Location::caller(),
-				priority: None,
 			};
 			match self.sim.get_mut(index) {
 				Some(slot) => *slot = sim,
@@ -504,9 +482,7 @@ impl<T: Task<Output = ()>> Tasks<T> {
 	/// woken by another (or pushed) during a pass runs in the next pass. Each pass
 	/// still snapshots before running anything, so a chain deeper than the budget,
 	/// or a task that wakes itself every poll, takes `budget` steps and leaves the
-	/// rest to the next call, waking the owner as [`poll`](Self::poll) does. Under a
-	/// `sim` schedule other than FIFO, a pass cut short to let another task run ends
-	/// the call the same way.
+	/// rest to the next call, waking the owner as [`poll`](Self::poll) does.
 	///
 	/// For an owner that runs its set until it is quiet before blocking, such as
 	/// an executor's turn. Run the call inside the owner's [`Waiter::batch`], or
@@ -558,19 +534,18 @@ impl<T: Task> Tasks<T> {
 			// every pass swaps. A plain load on either side would be the
 			// store-buffering (Dekker) shape that loses wakes, so keep both sides RMWs.
 			self.shared.pending.store(false, Ordering::Release);
-			let split = self.pass(done);
+			self.pass(done);
 			ran += 1;
 			// A `true` this misses belongs to a waker that saw `false` and woke the parent.
-			if split || ran == budget.get() || !self.shared.pending.load(Ordering::Acquire) {
+			if ran == budget.get() || !self.shared.pending.load(Ordering::Acquire) {
 				return ran;
 			}
 		}
 	}
 
-	/// Run every task woken before the pass began, returning whether the simulator left
-	/// some for the owner's next poll, which must then return so another task runs first.
+	/// Run every task woken before the pass began.
 	#[cfg_attr(feature = "sim", track_caller)]
-	fn pass(&mut self, done: &mut impl FnMut(T, T::Output)) -> bool {
+	fn pass(&mut self, done: &mut impl FnMut(T, T::Output)) {
 		// One snapshot per pass, taken in full before any task runs:
 		// `swap(0)` takes the woken bits and clears them, so a task woken
 		// during the pass (by another task or a self-wake) lands in the next
@@ -603,10 +578,10 @@ impl<T: Task> Tasks<T> {
 		}
 
 		#[cfg(feature = "sim")]
-		if let Some(children) = crate::clock::sim::children() {
-			let split = self.pass_scheduled(&children, &scratch, done);
+		if crate::clock::sim::probing() {
+			self.probe(done);
 			self.scratch = scratch;
-			return split;
+			return;
 		}
 
 		let slots = self.children.len();
@@ -661,111 +636,31 @@ impl<T: Task> Tasks<T> {
 			}
 		}
 		self.scratch = scratch;
-		false
 	}
 
-	/// [`pass`](Self::pass) as the simulator schedules it: the children woken in
-	/// `scratch`, or every child while it probes for lost wakeups, in the order it
-	/// picks. Those it leaves are woken again for the owner's next poll, so another task
-	/// may run in between; returns whether it left any.
+	/// [`pass`](Self::pass) while the simulator probes for lost wakeups: every child,
+	/// once each in slot order, blaming the first that progresses though nothing woke it.
 	#[cfg(feature = "sim")]
-	fn pass_scheduled(
-		&mut self,
-		children: &crate::clock::sim::Children,
-		scratch: &[(usize, u64)],
-		done: &mut impl FnMut(T, T::Output),
-	) -> bool {
-		let mut woken: Vec<usize> = match children.probing() {
-			true => (0..self.children.len()).collect(),
-			false => scratch
-				.iter()
-				.flat_map(|&(word, bits)| {
-					(0..WORD_BITS)
-						.filter(move |bit| bits & (1 << bit) != 0)
-						.map(move |bit| word * WORD_BITS + bit)
-				})
-				.collect(),
-		};
-		// A stale bit names a slot whose occupant already finished.
-		woken.retain(|&index| matches!(self.children.get(index), Some(Some(_))));
-
-		let run = children.run();
-		for &index in &woken {
-			let sim = &mut self.sim[index];
-			if sim.priority.is_none_or(|(drawn, _)| drawn != run) {
-				sim.priority = children.priority().map(|priority| (run, priority));
-			}
-		}
-
-		if children.probing() {
-			// Every child, once each, in slot order.
-			for index in woken {
-				self.poll_scheduled(children, index, done);
-			}
-			return false;
-		}
-
-		let mut priorities: Vec<_> = woken
-			.iter()
-			.map(|&index| self.sim[index].priority.map_or(0, |(_, priority)| priority))
-			.collect();
-		let (mut ran, mut yielded) = (false, false);
-		while !woken.is_empty() {
-			let Some(pick) = children.pick(&priorities, ran, yielded) else {
-				for index in woken {
-					self.wakers[index].wake_by_ref();
-				}
-				return true;
+	fn probe(&mut self, done: &mut impl FnMut(T, T::Output)) {
+		for index in 0..self.children.len() {
+			let Some(occupant) = self.children[index].as_mut() else {
+				continue;
 			};
-			priorities.remove(pick);
-			let index = woken.remove(pick);
-			ran = true;
-			yielded |= self.poll_scheduled(children, index, done);
-		}
-		false
-	}
-
-	/// Poll the child in slot `index` for [`pass_scheduled`](Self::pass_scheduled),
-	/// returning whether it yielded: woke itself and stays pending.
-	#[cfg(feature = "sim")]
-	fn poll_scheduled(
-		&mut self,
-		children: &crate::clock::sim::Children,
-		index: usize,
-		done: &mut impl FnMut(T, T::Output),
-	) -> bool {
-		self.shared.polling.store(index, Ordering::Relaxed);
-		self.shared.self_woke.store(false, Ordering::Relaxed);
-		let events = children.events();
-		let occupant = self.children[index].as_mut().expect("woken slot is occupied");
-		let cx = Context::from_waker(&self.wakers[index]);
-		let child_waiter = occupant.park.hold(&cx);
-		let poll = {
-			let _scope = crate::coop::child();
-			occupant.task.poll(child_waiter)
-		};
-		self.shared.polling.store(usize::MAX, Ordering::Relaxed);
-		if children.probing() && (poll.is_ready() || children.events() != events) {
-			children.blame(self.sim[index].location, index);
-		}
-		match poll {
-			Poll::Ready(output) => {
-				// A finishing poll is a step too.
-				if let Some((_, mut priority)) = self.sim[index].priority.take() {
-					children.ran(&mut priority, false);
-				}
+			let events = crate::clock::sim::events();
+			let cx = Context::from_waker(&self.wakers[index]);
+			let child_waiter = occupant.park.hold(&cx);
+			let poll = {
+				let _scope = crate::coop::child();
+				occupant.task.poll(child_waiter)
+			};
+			if poll.is_ready() || crate::clock::sim::events() != events {
+				crate::clock::sim::blame(self.sim[index].location, index);
+			}
+			if let Poll::Ready(output) = poll {
 				let occupant = self.children[index].take().expect("polled slot is occupied");
 				self.free.push(index);
 				self.len -= 1;
 				done(occupant.task, output);
-				false
-			}
-			Poll::Pending => {
-				let yielded = self.shared.self_woke.load(Ordering::Relaxed);
-				if let Some((_, priority)) = &mut self.sim[index].priority {
-					children.ran(priority, yielded);
-				}
-				yielded
 			}
 		}
 	}
@@ -1591,76 +1486,5 @@ mod tests {
 				assert_eq!(done.get(), 1);
 			})
 			.await;
-	}
-
-	/// Under `pct`, a child another thread wakes while it runs keeps its rank: only its
-	/// own wake is a yield.
-	#[cfg(feature = "sim")]
-	#[test]
-	fn a_worker_thread_wake_is_not_a_yield() {
-		crate::clock::sim::run_pct(async {
-			let mut tasks = Tasks::new();
-			tasks.push(|waiter: &Waiter| {
-				let waker = waiter.waker().clone();
-				std::thread::spawn(move || waker.wake()).join().unwrap();
-				Poll::Pending
-			});
-			// One pass.
-			crate::wait(|waiter| {
-				assert!(tasks.poll(waiter).is_pending());
-				Poll::Ready(())
-			})
-			.await;
-			let (_, priority) = tasks.sim[0].priority.expect("drawn at the first pass");
-			assert!(priority >= 1, "demoted to {priority}");
-		});
-	}
-
-	/// Under `pct`, a child a sibling woke earlier in the same pass keeps its rank when it
-	/// parks without waking itself: only a self-wake is a yield.
-	#[cfg(feature = "sim")]
-	#[test]
-	fn a_sibling_wake_is_not_a_yield() {
-		use std::{cell::RefCell, rc::Rc, task::Waker};
-
-		type Wakers = Rc<RefCell<[Option<Waker>; 2]>>;
-		// Its second poll wakes the other child, unless that one already had its own.
-		fn child(me: usize, wakers: Wakers, polls: Rc<[AtomicUsize; 2]>) -> impl FnMut(&Waiter) -> Poll<()> {
-			move |waiter| {
-				let n = polls[me].fetch_add(1, Ordering::Relaxed) + 1;
-				if n == 2
-					&& polls[1 - me].load(Ordering::Relaxed) < 2
-					&& let Some(other) = &wakers.borrow()[1 - me]
-				{
-					other.wake_by_ref();
-				}
-				wakers.borrow_mut()[me] = Some(waiter.waker().clone());
-				Poll::Pending
-			}
-		}
-
-		crate::clock::sim::run_pct(async {
-			let wakers: Wakers = Rc::default();
-			let polls = Rc::new([AtomicUsize::new(0), AtomicUsize::new(0)]);
-			let mut tasks = Tasks::new();
-			for me in 0..2 {
-				tasks.push(child(me, wakers.clone(), polls.clone()));
-			}
-			// One poll of the set, which runs its passes until no child is woken.
-			let pass = |waiter: &Waiter, tasks: &mut Tasks<_>| {
-				assert!(tasks.poll(waiter).is_pending());
-				Poll::Ready(())
-			};
-			crate::wait(|waiter| pass(waiter, &mut tasks)).await;
-			for waker in wakers.borrow().iter().flatten() {
-				waker.wake_by_ref();
-			}
-			crate::wait(|waiter| pass(waiter, &mut tasks)).await;
-			assert!(polls.iter().all(|polls| polls.load(Ordering::Relaxed) >= 2));
-			for sim in &tasks.sim {
-				let (_, priority) = sim.priority.expect("drawn at the first pass");
-				assert!(priority >= 1, "demoted to {priority}");
-			}
-		});
 	}
 }
