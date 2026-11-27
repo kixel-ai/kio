@@ -30,7 +30,7 @@ coroutines:
         # `--emit` splits on commas, so the file name cannot hold them.
         mir="target/coroutines/${features//,/+}.mir"
         # Only the final crate gets `--emit`, so dependencies build as usual.
-        cargo rustc --locked -p kio --lib --no-default-features --features "${features#default}" -- --emit "mir=$PWD/$mir"
+        cargo rustc --locked -p kio --lib --no-default-features --features "${features#default}" -- --emit "mir=$mir"
         if [[ ! -s "$mir" ]]; then
             echo "error: no MIR at $mir; run \`cargo clean -p kio\` to rebuild it" >&2
             exit 1
