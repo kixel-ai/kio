@@ -13,7 +13,7 @@
 //!
 //! Written for Charon and Aeneas: `while` loops, no closures, a `Vec` built by `push`.
 
-use crate::{Disabled, StateMachine};
+use kio::model::{Disabled, Machine};
 
 /// No rank: above every rank a reader has.
 pub const NO_RANK: u32 = u32::MAX;
@@ -322,7 +322,7 @@ fn toward(u: u8, x: Option<u8>, t: Option<u8>) -> (Option<u8>, Option<u8>) {
 	}
 }
 
-impl<const N: usize> StateMachine for Relay<N> {
+impl<const N: usize> Machine for Relay<N> {
 	type Event = Event;
 	type Output = ();
 

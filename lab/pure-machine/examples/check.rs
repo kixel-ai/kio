@@ -4,7 +4,7 @@
 
 use std::time::Instant;
 
-use kio_pure_machine::check::check;
+use kio::model::check;
 use kio_pure_machine::send_credit::Mutant;
 use kio_pure_machine::send_credit::world::configs::{self, Credit};
 
