@@ -28,13 +28,12 @@ Baseline from the m1 run (2026-11-26), on GitHub-hosted `ubuntu-24.04`, from eac
 
 Check first:
 
-- Whether the `check` job moved to a self-hosted runner with a persistent Nix store. On GitHub-hosted runners the dev shell is still the largest step, mostly unpacking and patching rust-overlay's `rustc` (about 9 to 30 s), which no binary cache serves.
+- Whether the merge gate moved to Kixel Quest's queue ([required-check](/quest/m1/required-check.md)). `check` stays on GitHub-hosted runners after merge, where the dev shell is still the largest step, mostly unpacking and patching rust-overlay's `rustc` (about 9 to 30 s), which no binary cache serves.
 - Whether `rust-toolchain.toml` still sets `profile = "minimal"`. The default profile pulls in rust-docs (677 MB, 67k files).
 - The `kio` package list (`cargo package --list -p kio`). The `include` allowlist keeps repository tooling out.
 
 Measured and left alone:
 
-- Criterion's dependency tree is 36 of the workspace's 91 packages and about 39% of cold build unit time. A warm PR run pays nothing for it, because the `main` cache holds it. Moving the benches into an unpublished crate would help only cold builds. Revisit if cold builds become common, such as cacheless post-merge Windows or macOS lanes.
+- Criterion's dependency tree is 36 of the workspace's 91 packages and about 39% of cold build unit time. A warm run on `main` pays nothing for it, because the `main` cache holds it. Moving the benches into an unpublished crate would help only cold builds. Revisit if cold builds become common, such as cacheless post-merge Windows or macOS lanes.
 - A `restore-keys` fallback for the cargo cache: a toolchain bump invalidates the whole target directory, so only key changes that leave artifacts reusable (`Cargo.lock` or `Cargo.toml` edits) would gain.
-- Skipping cargo on quest-only PRs: the dev shell is needed for `quest check` anyway, and warm cargo is about 14 s.
 - Measurements on the agent host: its load average was over 5,000, so its wall times only rank work. They are not a baseline.

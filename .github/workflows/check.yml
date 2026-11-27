@@ -1,7 +1,6 @@
 name: Check
 
 on:
-  pull_request:
   push:
     branches: [main]
   workflow_dispatch:
@@ -39,8 +38,8 @@ jobs:
           path: *cargo-paths
           key: ${{ steps.cargo.outputs.cache-primary-key }}
 
-  # Proves src/log.rs's Verus proof. Separate from `check` so the merge gate's shell
-  # skips Verus's toolchain, and in parallel with it.
+  # Proves src/log.rs's Verus proof. Separate from `check` so its shell skips Verus's
+  # toolchain, and in parallel with it.
   verify:
     runs-on: ubuntu-24.04
     timeout-minutes: 30

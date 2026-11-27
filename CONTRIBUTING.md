@@ -18,13 +18,14 @@ Have at least these sections:
 
 # Landing
 
-A PR lands on the maintainer's pick once CI's `check` and `verify` jobs and its local `quest review` rounds pass; queue the reviewed head with `quest merge <pr> --land <sha> --squash`.
-No ruleset requires either job yet, so a pending run does not hold the merge: queue only once both pass.
+CI runs no checks on pull requests: run `just ci` before pushing, and `just verify` too for a change to `src/log.rs`, `verify/`, or kio's dependencies (see Verified code).
+A PR lands on the maintainer's pick once those and its local `quest review` rounds pass; queue the reviewed head with `quest merge <pr> --land <sha> --squash`.
+`check.yml` and `post-merge.yml` run after each push to `main`, and a post-merge failure files an issue.
 Ask before using the admin bypass of `main`'s rulesets.
 
 # Verified code
 
-`src/log.rs` carries a Verus proof of its append and read paths, written in Verus's attribute syntax so the file stays plain Rust. Only Verus sets the `verus_keep_ghost` cfg that turns the proof on, and only the `verify/` package, which builds kio's sources for `just verify`, depends on `vstd` and opts in to `cargo verus`. So plain builds, `just ci`, and downstream crates, Verus ones included, compile no Verus crate for kio, and editing the log needs no Verus. Keep `verify/Cargo.toml`'s dependencies in step with kio's non-optional ones. CI's `verify` job proves it; to run that locally, `nix develop .#verus --command just verify` (Linux only).
+`src/log.rs` carries a Verus proof of its append and read paths, written in Verus's attribute syntax so the file stays plain Rust. Only Verus sets the `verus_keep_ghost` cfg that turns the proof on, and only the `verify/` package, which builds kio's sources for `just verify`, depends on `vstd` and opts in to `cargo verus`. So plain builds, `just ci`, and downstream crates, Verus ones included, compile no Verus crate for kio, and editing the log needs no Verus. Keep `verify/Cargo.toml`'s dependencies in step with kio's non-optional ones. CI's `verify` job proves it on `main`; to run it locally, `nix develop .#verus --command just verify` (Linux only).
 
 - Contracts sit in `#[cfg_attr(verus_keep_ghost, verus_spec(...))]`; proof steps in `proof!`, ghost `let`s in `proof_decl!`, and a call's ghost arguments in `proof_with!` just before it, so inside the `unsafe` block of a call to an `unsafe fn` (inside `open_atomic_invariant!`, a `verus_spec(with ...)` attribute on the statement instead). Ghost types, spec functions, and lemmas live in `verus!` blocks under `#[cfg(verus_keep_ghost)]`, and ghost fields under `#[cfg(verus_keep_ghost_body)]`. Plain builds expand all of these to nothing (`src/log/erased.rs`).
 - Every atomic the proof tracks goes through `src/log/atomic.rs` and is accessed inside `open_atomic_invariant!`, one atomic operation per block.
