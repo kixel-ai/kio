@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `kio::model`, behind the off-by-default `model` feature: an exhaustive breadth-first model checker for pure state machines (`Machine`, `Explore`, `check`, `find`) that returns the shortest trace to a broken rule.
+
 ### Changed
 
 - kio-macros parses with syn 3, the version serde and futures already build, and the `sim` feature builds futures without its executor and macros.

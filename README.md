@@ -12,7 +12,8 @@ the `async` feature adds `async fn` wrappers that await them. Producers and cons
 alongside a FIFO queue, an append-only log readers take entries from without a lock, and
 a poll-driven task set. `clock` is the time those waits run on, and its `sim` feature
 runs a test on a deterministic executor whose time jumps instead of sleeping. The
-crates.io release predates `sim`, so take kio from Git until the next one ships
+`model` feature checks a pure state machine by visiting every state it can reach. The
+crates.io release predates `sim` and `model`, so take kio from Git until the next one ships
 (`cargo add --dev kio --git https://github.com/kixel-ai/kio --features sim`):
 
 ```rust

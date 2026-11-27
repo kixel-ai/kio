@@ -1,5 +1,5 @@
-//! A [`Session`] closed by an abstract environment, so [`crate::check`] explores it as TLC
-//! explores `SendCredit.tla`: the same steps, rules, witnesses, and configs.
+//! A [`Session`] closed by an abstract environment, so [`kio::model::check`] explores it
+//! as TLC explores `SendCredit.tla`: the same steps, rules, witnesses, and configs.
 //!
 //! The environment is each subscription's cache, which holds every group from the start
 //! and hands them out in any order; each task, awake or parked; and the peer, which
@@ -12,8 +12,8 @@
 use std::fmt;
 
 use super::{Event, Mutant, Output, Session, Shape};
-use crate::check::Explore;
-use crate::{Disabled, StateMachine};
+use kio::model::Explore;
+use kio::model::{Disabled, Machine};
 
 /// Where a group is, as far as the environment can tell.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -220,7 +220,7 @@ impl<const S: usize, const G: usize> World<S, G> {
 	}
 }
 
-impl<const S: usize, const G: usize> StateMachine for World<S, G> {
+impl<const S: usize, const G: usize> Machine for World<S, G> {
 	type Event = Action;
 	type Output = ();
 
@@ -367,7 +367,7 @@ pub mod configs {
 mod tests {
 	use super::configs::*;
 	use super::*;
-	use crate::check::{check, find};
+	use kio::model::{check, find};
 
 	/// Each config visits exactly the states TLC finds in `SendCredit.tla` (TLC 1.7.4's
 	/// distinct states), so the machine and its environment are the model, step for step.
