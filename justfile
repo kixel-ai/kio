@@ -16,13 +16,15 @@ check:
     nixfmt --check flake.nix nix/verus.nix
     quest check
 
-# Run unit, doc, and trybuild UI tests across the workspace, failing on any host-clock timer,
-# then kio's suite under each adversarial sim schedule with the lost-wakeup probe.
+# Run unit, doc, and trybuild UI tests across the workspace, failing on any host-clock timer.
 test *args:
     KIO_DENY_HOST_TIMERS=1 cargo test --locked --workspace --all-features {{ args }}
-    # About 0.4 s a pass. Each run draws a fresh seed and prints it on failure, as the first pass does.
+
+# Run kio's suite under each adversarial sim schedule with the lost-wakeup probe, about
+# 0.4 s a pass. Each run draws a fresh seed and prints it on failure, as `test` does.
+sweep:
     for schedule in random pct; do \
-        KIO_DENY_HOST_TIMERS=1 KIO_SIM_PROBE=1 KIO_SIM_SCHEDULE=$schedule cargo test --locked -q -p kio --all-features {{ args }}; \
+        KIO_DENY_HOST_TIMERS=1 KIO_SIM_PROBE=1 KIO_SIM_SCHEDULE=$schedule cargo test --locked -q -p kio --all-features; \
     done
 
 # Run kio's unit tests under Miri (nightly with the miri component).
@@ -41,8 +43,8 @@ miri:
     # crossbeam-epoch's collector violates Stacked Borrows and never frees at exit.
     MIRIFLAGS="-Zmiri-tree-borrows -Zmiri-ignore-leaks" run cargo miri test --locked -p kio --lib log::
 
-# Run what CI runs: lint, then test.
-ci: check test
+# Run what CI runs: lint, test, then the adversarial sweep.
+ci: check test sweep
 
 # Fail a breaking PR title (`type!:` or `type(scope)!:`) whose diff from `base` changes no MIGRATE.md.
 [positional-arguments]
