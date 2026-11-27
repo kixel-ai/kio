@@ -20,11 +20,12 @@ set_option maxRecDepth 2048
 
 namespace pure_machine
 
-/-- [kio_pure_machine::Disabled]
-    Source: 'lab/pure-machine/src/lib.rs', lines 43:0-43:20
+/-- [kio::model::Disabled]
+    Source: 'src/model.rs', lines 102:0-102:19
+    Name pattern: [kio::model::Disabled]
     Visibility: public -/
-@[reducible]
-def Disabled := Unit
+@[reducible, rust_type "kio::model::Disabled"]
+def kio.model.Disabled := Unit
 
 /-- [kio_pure_machine::send_credit::Mutant]
     Source: 'lab/pure-machine/src/send_credit.rs', lines 41:0-49:1

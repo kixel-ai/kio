@@ -1126,8 +1126,8 @@ def send_credit.Session.poll
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
   (s : Std.Usize) (cached : Std.U16) (pick : Option Std.U8)
   (out : alloc.vec.Vec send_credit.Output) :
-  Result ((core.result.Result Unit Disabled) × (send_credit.Session S G) ×
-    (alloc.vec.Vec send_credit.Output))
+  Result ((core.result.Result Unit kio.model.Disabled) × (send_credit.Session
+    S G) × (alloc.vec.Vec send_credit.Output))
   := do
   let i ← send_credit.Session.taken self s
   let i1 ← lift (cached &&& i)
@@ -1183,8 +1183,8 @@ def send_credit.Session.poll
 def send_credit.Session.finished
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
   (s : Std.Usize) (k : Std.U8) (out : alloc.vec.Vec send_credit.Output) :
-  Result ((core.result.Result Unit Disabled) × (send_credit.Session S G) ×
-    (alloc.vec.Vec send_credit.Output))
+  Result ((core.result.Result Unit kio.model.Disabled) × (send_credit.Session
+    S G) × (alloc.vec.Vec send_credit.Output))
   := do
   if k < 1#u8
   then ok (core.result.Result.Err (), self, out)
@@ -1263,8 +1263,8 @@ def send_credit.Session.impl.freed_loop
 def send_credit.Session.impl.freed
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
   (out : alloc.vec.Vec send_credit.Output) :
-  Result ((core.result.Result Unit Disabled) × (send_credit.Session S G) ×
-    (alloc.vec.Vec send_credit.Output))
+  Result ((core.result.Result Unit kio.model.Disabled) × (send_credit.Session
+    S G) × (alloc.vec.Vec send_credit.Output))
   := do
   if self.freed >= self.opened
   then ok (core.result.Result.Err (), self, out)
@@ -1281,8 +1281,8 @@ def send_credit.Session.impl.freed
 def send_credit.Session.step
   {S : Std.Usize} {G : Std.Usize} (self : send_credit.Session S G)
   (event : send_credit.Event) (out : alloc.vec.Vec send_credit.Output) :
-  Result ((core.result.Result Unit Disabled) × (send_credit.Session S G) ×
-    (alloc.vec.Vec send_credit.Output))
+  Result ((core.result.Result Unit kio.model.Disabled) × (send_credit.Session
+    S G) × (alloc.vec.Vec send_credit.Output))
   := do
   match event with
   | send_credit.Event.Poll sub cached pick =>

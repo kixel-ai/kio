@@ -19,7 +19,7 @@
 
 pub mod world;
 
-use crate::{Disabled, StateMachine};
+use kio::model::{Disabled, Machine};
 
 /// What stays fixed for a session's life.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -577,7 +577,7 @@ impl<const S: usize, const G: usize> Session<S, G> {
 		Ok(())
 	}
 
-	/// Apply one event; the body of [`StateMachine::step`], for Charon to start from.
+	/// Apply one event; the body of [`Machine::step`], for Charon to start from.
 	pub fn step(&mut self, event: Event, out: &mut Vec<Output>) -> Result<(), Disabled> {
 		match event {
 			Event::Poll { sub, cached, pick } if sub < S => self.poll(sub, cached, pick, out),
@@ -609,7 +609,7 @@ impl<const S: usize, const G: usize> Session<S, G> {
 	}
 }
 
-impl<const S: usize, const G: usize> StateMachine for Session<S, G> {
+impl<const S: usize, const G: usize> Machine for Session<S, G> {
 	type Event = Event;
 	type Output = Output;
 

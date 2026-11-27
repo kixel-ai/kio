@@ -1,16 +1,15 @@
-# A lab spike, never published: a pure, synchronous `StateMachine`, a BFS model checker
-# for it, and moq-net's send credit and warm routing written on it, so Kani and Aeneas
-# can read the same Rust.
+# A lab spike, never published: moq-net's send credit and warm routing written as pure
+# `kio::model::Machine`s, so kio's model checker, Kani, and Aeneas read the same Rust.
 [package]
 name = "kio-pure-machine"
-description = "Spike: pure state machines with a built-in model checker"
+description = "Spike: pure state machines, model checked and proved"
 publish = false
 version = "0.0.0"
 edition = "2024"
 rust-version.workspace = true
 
 [dependencies]
-kio = { path = "../.." }
+kio = { path = "../..", features = ["model"] }
 
 [lints]
 workspace = true
