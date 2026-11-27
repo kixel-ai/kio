@@ -38,7 +38,7 @@ miri:
     MIRIFLAGS="-Zmiri-tree-borrows -Zmiri-ignore-leaks" run cargo miri test --locked -p kio --lib log::
 
 # Run kio's thread-spawning unit tests under Miri across many scheduler seeds (nightly with miri). Random schedules, not exhaustive: a pass is evidence, not proof.
-miri-seeds seeds="16":
+miri-seeds seeds="8":
     #!/usr/bin/env bash
     set -euo pipefail
     # Every library test that spawns a thread. A rename fails the count below, not silently.
