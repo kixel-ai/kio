@@ -77,13 +77,16 @@ miri:
 miri-seeds seeds="8":
     #!/usr/bin/env bash
     set -euo pipefail
-    # Every library test that spawns a thread. A rename fails the count below, not silently.
+    # Every library test that spawns a thread or a Tokio worker (grep `src/` for `thread::` and
+    # `new_multi_thread`). A rename fails the count below, not silently.
     names=(
         channel::tests::racing_publishes_and_closes_wake_every_waiter
         clock::captured::tests::a_paused_runtime_reads_the_same_everywhere
         clock::deadline::tests::entering_nests
+        clock::installed::tests::advance_wakes_a_parked_timer
         clock::installed::tests::an_entered_queue_keeps_the_installed_clock
         clock::random::tests::the_host_seed_holds_while_draws_move
+        clock::runtime::tests::threads_share_one_origin
         clock::sim::tests::the_probe_fails_a_wake_from_another_thread
         clock::sim::tests::the_probe_fails_a_wake_from_another_thread_as_the_root_finishes
         task::tests::a_wake_during_thread_teardown_reaches_the_owner
@@ -95,6 +98,7 @@ miri-seeds seeds="8":
         local out count=$1
         shift
         out=$(mktemp)
+        trap 'rm -f "$out"' RETURN
         "$@" 2>&1 | tee "$out"
         # Seeds run in parallel, so their result lines can interleave: match loosely.
         grep -Eq "ok\. $count passed" "$out" || { echo "error: expected $count tests per seed: $*" >&2; exit 1; }
@@ -105,15 +109,14 @@ miri-seeds seeds="8":
     # The log on Tree Borrows, as `miri` runs it.
     MIRIFLAGS="-Zmiri-tree-borrows -Zmiri-ignore-leaks -Zmiri-many-seeds=0..{{ seeds }}" run 1 cargo miri test --locked -p kio --lib -- --exact log::test::concurrent_readers_see_every_entry
 
-# Run kio's library tests under ThreadSanitizer (nightly with rust-src, Linux). Observes the schedules that happen to run, not all of them: a pass is evidence, not proof. Races are suppressed only by tsan.supp.
+# Run kio's library tests under ThreadSanitizer (nightly with rust-src, Linux). Observes the schedules that happen to run, not all of them: a pass is evidence, not proof.
 tsan:
     #!/usr/bin/env bash
     set -euo pipefail
     host=$(rustc -vV | sed -n 's/^host: //p')
     # An explicit --target keeps the sanitizer off build scripts and proc macros, and -Zbuild-std
     # instruments std, so its locks and atomics are modeled rather than invisible.
-    RUSTFLAGS="-Zsanitizer=thread" TSAN_OPTIONS="suppressions={{ justfile_directory() }}/tsan.supp" \
-        cargo test --locked -p kio --lib --all-features -Zbuild-std --target "$host" --target-dir target/tsan
+    RUSTFLAGS="-Zsanitizer=thread" cargo test --locked -p kio --lib --all-features -Zbuild-std --target "$host" --target-dir target/tsan
 
 # Run what CI runs: lint, test, then the adversarial sweep.
 ci: check test sweep
