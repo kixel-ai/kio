@@ -108,24 +108,42 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: cargo publish --locked --no-verify -p kio
 
-  # Tags what this run published, which is where release-plz starts the next changelog. The job
-  # holds no crates.io credential, only the token to create a tag.
+  # Tags each crate's manifest version that crates.io holds but has no tag, which is where
+  # release-plz starts the next changelog. The tag goes on the commit crates.io recorded in the
+  # package, so a run that failed after publishing is repaired by the next run, whatever main
+  # holds by then. The job holds no crates.io credential, only the token to create a tag.
   tag:
     needs: [plan, publish-macros, publish-kio]
-    if: ${{ !cancelled() && (needs.publish-macros.result == 'success' || needs.publish-kio.result == 'success') }}
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
       - env:
           GH_TOKEN: ${{ github.token }}
-          MACROS: ${{ needs.publish-macros.result == 'success' && format('macros-v{0}',needs.plan.outputs.macros_version) || '' }}
-          KIO: ${{ needs.publish-kio.result == 'success' && format('kio-v{0}', needs.plan.outputs.kio_version) || '' }}
+          MACROS_VERSION: ${{ needs.plan.outputs.macros_version }}
+          KIO_VERSION: ${{ needs.plan.outputs.kio_version }}
         run: |
-          for tag in $MACROS $KIO; do
-            gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" -f ref="refs/tags/${tag}" -f sha="${GITHUB_SHA}" >/dev/null
-            echo "tagged ${tag}"
-          done
+          tag_crate() {
+            local crate="$1" prefix="$2" version="$3"
+            local tag="${prefix}-v${version}" crate_file status sha
+            if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" >/dev/null 2>&1; then
+              return 0
+            fi
+            crate_file=$(mktemp)
+            status=$(curl -sL -o "$crate_file" -w '%{http_code}' -A "kixel-ai/kio release" \
+              "https://crates.io/api/v1/crates/${crate}/${version}/download")
+            case "$status" in
+              404) echo "${crate} ${version} is not published, so there is nothing to tag"; return 0 ;;
+              200) ;;
+              *) echo "crates.io answered ${status} for ${crate} ${version}" >&2; return 1 ;;
+            esac
+            sha=$(tar -xzO -f "$crate_file" "${crate}-${version}/.cargo_vcs_info.json" | jq -er .git.sha1)
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" -f ref="refs/tags/${tag}" -f sha="$sha" >/dev/null
+            echo "tagged ${tag} at ${sha}"
+          }
+          tag_crate kio-macros macros "$MACROS_VERSION"
+          tag_crate kio kio "$KIO_VERSION"
 
   # Opens, or regenerates, the release PR from main's commits since each crate's last tag. It
   # runs after publishing, so the tags and crates.io already hold what main's versions name.
@@ -150,6 +168,9 @@ jobs:
           permission-pull-requests: write
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Main's tip, not this run's commit, so rerunning an old run never regenerates the
+          # release PR from older commits.
+          ref: refs/heads/main
           # Every tag and commit, since release-plz finds a crate's last release by its tag.
           fetch-depth: 0
           # release-plz pushes the release branch with this credential.
