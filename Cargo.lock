@@ -652,17 +652,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "kio-reactor-lab"
-version = "0.0.0"
-dependencies = [
- "kio",
- "kio-macros",
- "kio-reactor-lab",
- "rand",
- "trybuild",
-]
-
-[[package]]
 name = "libc"
 version = "0.2.191"
 source = "registry+https://github.com/rust-lang/crates.io-index"
