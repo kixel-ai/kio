@@ -19,8 +19,8 @@
 //! keeps a [`Deadlines`] queue in step.
 //!
 //! Each run seeds [`rng`](crate::clock::rng) and [`seed`](crate::clock::seed) from `MOQ_SIM_SEED`,
-//! or at random when it is unset, and a run that panics prints its seed, so setting
-//! `MOQ_SIM_SEED` to it replays the run bit-exact.
+//! or at random when it is unset, and a run that panics prints its seed and schedule settings,
+//! so setting all of them as printed replays the run bit-exact.
 //!
 //! Experimental: `KIO_SIM_SCHEDULE` picks the order ready tasks run in (wake order by
 //! default, or `random` or `pct`, drawn from the seed; a [`Tasks`](crate::Tasks) set keeps
@@ -562,6 +562,8 @@ fn run_inner(runtime: &Runtime, future: Pin<&mut dyn Future<Output = ()>>, locat
 			let (done, woke) = root.poll(&mut spawned, id);
 			let yields = woke && YIELDED.take();
 			if done && id == ROOT {
+				// The root may have joined a thread that woke a task on its way out.
+				runtime.ready.check();
 				break;
 			}
 			if done {
@@ -742,8 +744,10 @@ pub fn idle() -> impl Future<Output = ()> {
 			return Poll::Ready(());
 		}
 		// Registered once, its waker kept current, so a probe's re-polls add nothing;
-		// the run holds it weakly, so a dropped future awaits nothing.
+		// the run holds it weakly, so a dropped future awaits nothing. The first
+		// registration is progress, as arming a timer is: it changes how the run ends.
 		if idle.waker.replace(Some(cx.waker().clone())).is_none() {
+			event();
 			runtime.idle.borrow_mut().push(Rc::downgrade(&idle));
 		}
 		Poll::Pending
@@ -1750,6 +1754,48 @@ mod tests {
 				deadline.poll(waiter)
 			})
 			.await;
+		});
+	}
+
+	/// A root that reaches `idle` only on its probe re-poll would have deadlocked unprobed:
+	/// the probe reports it rather than settling the wait.
+	#[test]
+	#[should_panic(expected = "lost wakeup: the root future run at src/clock/sim.rs")]
+	fn the_probe_reports_an_idle_wait_its_re_poll_registers() {
+		run_with(0, probing(), async {
+			let milestone = Rc::new(Cell::new(false));
+			drop(spawn({
+				let milestone = milestone.clone();
+				async move { milestone.set(true) }
+			}));
+			let mut waiting = None;
+			crate::wait(|waiter| {
+				if !milestone.get() {
+					return Poll::Pending;
+				}
+				let idle = waiting.get_or_insert_with(|| Box::pin(idle()));
+				waiter.poll_future(idle.as_mut())
+			})
+			.await;
+		});
+	}
+
+	/// A root that finishes right after another thread woke a task still fails the run.
+	#[test]
+	#[should_panic(expected = "KIO_SIM_PROBE=1 saw a wake from a thread other than the run's")]
+	fn the_probe_fails_a_wake_from_another_thread_as_the_root_finishes() {
+		run_with(0, probing(), async {
+			let parked: Arc<Mutex<Option<std::task::Waker>>> = Arc::default();
+			drop(spawn({
+				let parked = parked.clone();
+				std::future::poll_fn(move |cx| {
+					*parked.lock().unwrap() = Some(cx.waker().clone());
+					Poll::<()>::Pending
+				})
+			}));
+			yield_now().await;
+			let waker = parked.lock().unwrap().take().expect("parked");
+			std::thread::spawn(move || waker.wake()).join().unwrap();
 		});
 	}
 

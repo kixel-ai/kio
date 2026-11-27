@@ -74,17 +74,15 @@ impl Config {
 }
 
 /// The environment settings beyond the seed that replay a run, each with a leading space.
+/// Both are always named, so a replay ignores whatever the shell already exports.
 impl std::fmt::Display for Config {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		match &self.policy {
-			Policy::Fifo => {}
+			Policy::Fifo => f.write_str(" KIO_SIM_SCHEDULE=fifo")?,
 			Policy::Random => f.write_str(" KIO_SIM_SCHEDULE=random")?,
 			Policy::Pct { depth, steps } => write!(f, " KIO_SIM_SCHEDULE=pct:{depth}:{steps}")?,
 		}
-		if self.probe {
-			f.write_str(" KIO_SIM_PROBE=1")?;
-		}
-		Ok(())
+		write!(f, " KIO_SIM_PROBE={}", u8::from(self.probe))
 	}
 }
 
@@ -207,6 +205,17 @@ mod tests {
 		for bad in ["", "FIFO", "pct:0", "pct:2:0", "pct:x", "random:1", "pct:1:2:3"] {
 			assert!(Policy::parse(bad).is_none(), "{bad:?} parsed");
 		}
+	}
+
+	/// A replay hint names both settings, defaults included, so the shell's own cannot leak in.
+	#[test]
+	fn replay_hints_name_every_setting() {
+		assert_eq!(Config::default().to_string(), " KIO_SIM_SCHEDULE=fifo KIO_SIM_PROBE=0");
+		let config = Config {
+			policy: Policy::Pct { depth: 2, steps: 50 },
+			probe: true,
+		};
+		assert_eq!(config.to_string(), " KIO_SIM_SCHEDULE=pct:2:50 KIO_SIM_PROBE=1");
 	}
 
 	/// A change point drops the running unit below every initial priority, and a yield
