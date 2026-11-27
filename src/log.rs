@@ -1865,7 +1865,9 @@ impl<T> Segment<T> {
 		if header.owners.fetch_sub(1, Ordering::Release) != 1 {
 			return;
 		}
-		fence(Ordering::Acquire);
+		// An Acquire load, as std's `Arc` does, rather than `fence(Acquire)`: the same ordering,
+		// but ThreadSanitizer models it and not fences.
+		header.owners.load(Ordering::Acquire);
 		// The header holds only atomics and the slots `MaybeUninit`s whose entries are
 		// already dropped, so nothing needs dropping before the free.
 		let capacity = header.capacity;
