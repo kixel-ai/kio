@@ -60,7 +60,7 @@
           devShells = {
             default = pkgs.mkShell { packages = devPackages; };
           }
-          # The default shell plus Verus, for `just verify`. Separate so the merge gate's
+          # The default shell plus Verus, for `just verify`. Separate so `just ci`'s
           # shell doesn't download Verus's toolchain; Linux only, as Verus's release is.
           // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
             # The default shell plus release-plz and cargo-semver-checks, for `just release-pr`.

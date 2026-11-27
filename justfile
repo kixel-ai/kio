@@ -73,24 +73,66 @@ miri:
     # crossbeam-epoch's collector violates Stacked Borrows and never frees at exit.
     MIRIFLAGS="-Zmiri-tree-borrows -Zmiri-ignore-leaks" run cargo miri test --locked -p kio --lib log::
 
-# Run what CI runs: lint, test, the adversarial sweep, then the release PR freshness check.
+# Run kio's thread-spawning unit tests under Miri across many scheduler seeds (nightly with miri). Random schedules, not exhaustive: a pass is evidence, not proof.
+miri-seeds seeds="8":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Every library test that spawns a thread or a Tokio worker (grep `src/` for `thread::` and
+    # `new_multi_thread`). A rename fails the count below, not silently.
+    names=(
+        channel::tests::racing_publishes_and_closes_wake_every_waiter
+        clock::captured::tests::a_paused_runtime_reads_the_same_everywhere
+        clock::deadline::tests::entering_nests
+        clock::installed::tests::advance_wakes_a_parked_timer
+        clock::installed::tests::an_entered_queue_keeps_the_installed_clock
+        clock::random::tests::the_host_seed_holds_while_draws_move
+        clock::runtime::tests::threads_share_one_origin
+        clock::sim::tests::the_probe_fails_a_wake_from_another_thread
+        clock::sim::tests::the_probe_fails_a_wake_from_another_thread_as_the_root_finishes
+        task::tests::a_wake_during_thread_teardown_reaches_the_owner
+        task::tests::concurrent_wakes_are_never_lost
+        tests::consumer_creation_with_existing_demand_does_not_relock
+        weak::test::upgrade_never_wins_a_closing_channel
+    )
+    run() {
+        local out count=$1
+        shift
+        out=$(mktemp)
+        trap 'rm -f "$out"' RETURN
+        "$@" 2>&1 | tee "$out"
+        # Seeds run in parallel, so their result lines can interleave: match loosely.
+        grep -Eq "ok\. $count passed" "$out" || { echo "error: expected $count tests per seed: $*" >&2; exit 1; }
+    }
+    echo "seeds 0..{{ seeds }}"
+    # Stacked Borrows with leak checking.
+    MIRIFLAGS="-Zmiri-many-seeds=0..{{ seeds }}" run "${#names[@]}" cargo miri test --locked -p kio --lib -- --exact "${names[@]}"
+    # The log on Tree Borrows, as `miri` runs it.
+    MIRIFLAGS="-Zmiri-tree-borrows -Zmiri-ignore-leaks -Zmiri-many-seeds=0..{{ seeds }}" run 1 cargo miri test --locked -p kio --lib -- --exact log::test::concurrent_readers_see_every_entry
+
+# Run kio's library tests under ThreadSanitizer (nightly with rust-src, Linux). Observes the schedules that happen to run, not all of them: a pass is evidence, not proof.
+tsan:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    host=$(rustc -vV | sed -n 's/^host: //p')
+    # An explicit --target keeps the sanitizer off build scripts and proc macros, and -Zbuild-std
+    # instruments std, so its locks and atomics are modeled rather than invisible.
+    RUSTFLAGS="-Zsanitizer=thread" cargo test --locked -p kio --lib --all-features -Zbuild-std --target "$host" --target-dir target/tsan
+
+# Run what CI runs: lint, test, the adversarial sweep, then, on a `release-plz-*` branch, the release PR freshness check.
 ci: check test sweep release-fresh
 
 # Open or regenerate the release PR from main's commits since each crate's last tag. CI runs it from release.yml with a token that can open PRs; run it in `nix develop .#release`.
 release-pr:
     release-plz release-pr --git-token "$GITHUB_TOKEN"
 
-# Fail a release PR that does not contain main's tip, so a run after main moves flags it stale until release.yml regenerates it from the newest main. Does nothing outside a pull_request run of a `release-plz-*` branch.
+# Fail a checked-out `release-plz-*` branch that does not contain origin/main's tip, so a stale release PR is caught before it lands. Run it in `just ci` on the release PR's checkout; does nothing on any other branch, `main`'s own CI included.
 release-fresh:
     #!/usr/bin/env bash
     set -euo pipefail
-    [[ "${GITHUB_EVENT_NAME:-}" == pull_request && "${GITHUB_HEAD_REF:-}" == release-plz-* ]] || exit 0
-    head=$(jq -r .pull_request.head.sha "$GITHUB_EVENT_PATH")
-    main=$(git ls-remote origin refs/heads/main | cut -f1)
-    # Deep enough to hold a release PR with a few extra commits on top of main's tip.
-    git fetch --quiet --depth=50 origin "$head" "$main"
-    if ! git merge-base --is-ancestor "$main" "$head"; then
-        echo "error: this release PR does not contain main's tip ${main}; wait for release.yml to regenerate it" >&2
+    [[ "$(git branch --show-current)" == release-plz-* ]] || exit 0
+    git fetch --quiet origin main
+    if ! git merge-base --is-ancestor FETCH_HEAD HEAD; then
+        echo "error: this release PR does not contain main's tip $(git rev-parse --short FETCH_HEAD); wait for release.yml to regenerate it" >&2
         exit 1
     fi
 

@@ -1,6 +1,6 @@
 name: Migrate
 
-# Until the merge queue's `Queue` check gates it, reports a landed `!` squash title
+# Until the merge queue gates it (quest/m1/required-check.md), reports a landed `!` squash title
 # without a MIGRATE.md entry. Apart from post-merge, whose coalescing would skip a commit.
 on:
   push:

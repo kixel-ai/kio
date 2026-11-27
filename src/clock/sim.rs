@@ -1661,6 +1661,13 @@ mod tests {
 		}
 	}
 
+	/// The message `f` panics with, for a report naming a location in this file, which
+	/// `#[should_panic]` cannot spell: the path separator is the host's.
+	fn panic_message(f: impl FnOnce()) -> String {
+		let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).expect_err("expected a panic");
+		*panic.downcast::<String>().expect("a formatted panic message")
+	}
+
 	/// A task that a flag lets finish, though raising the flag wakes nobody: only a
 	/// timer at 5 s, which hides the lost wakeup, wakes it.
 	fn unwoken() -> impl FnMut(&crate::Waiter) -> Poll<()> + use<> {
@@ -1693,11 +1700,16 @@ mod tests {
 	}
 
 	#[test]
-	#[should_panic(expected = "lost wakeup: the task spawned at src/clock/sim.rs")]
 	fn the_probe_catches_a_lost_wakeup_a_timer_masks() {
-		run_with(0, probing(), async {
-			spawn(crate::wait(unwoken())).await.unwrap();
+		let message = panic_message(|| {
+			run_with(0, probing(), async {
+				spawn(crate::wait(unwoken())).await.unwrap();
+			});
 		});
+		assert!(
+			message.contains(&format!("lost wakeup: the task spawned at {}:", file!())),
+			"{message}"
+		);
 	}
 
 	/// Likewise a wake of an earlier run's root, which retired when its run ended.
@@ -1740,44 +1752,54 @@ mod tests {
 	/// A queue only the probe's re-poll attaches, holding an armed deadline, would have
 	/// left the run deadlocked without the probe: the probe reports it.
 	#[test]
-	#[should_panic(expected = "lost wakeup: the root future run at src/clock/sim.rs")]
 	fn the_probe_reports_a_queue_attached_on_its_re_poll() {
-		run_with(0, probing(), async {
-			let deadlines = Deadlines::new(crate::clock::now());
-			let mut deadline = crate::clock::Deadline::after(&deadlines, Duration::from_secs(1));
-			let mut polls = 0;
-			crate::wait(|waiter| {
-				polls += 1;
-				if polls == 2 {
-					attach(&deadlines);
-				}
-				deadline.poll(waiter)
-			})
-			.await;
+		let message = panic_message(|| {
+			run_with(0, probing(), async {
+				let deadlines = Deadlines::new(crate::clock::now());
+				let mut deadline = crate::clock::Deadline::after(&deadlines, Duration::from_secs(1));
+				let mut polls = 0;
+				crate::wait(|waiter| {
+					polls += 1;
+					if polls == 2 {
+						attach(&deadlines);
+					}
+					deadline.poll(waiter)
+				})
+				.await;
+			});
 		});
+		assert!(
+			message.contains(&format!("lost wakeup: the root future run at {}:", file!())),
+			"{message}"
+		);
 	}
 
 	/// A root that reaches `idle` only on its probe re-poll would have deadlocked unprobed:
 	/// the probe reports it rather than settling the wait.
 	#[test]
-	#[should_panic(expected = "lost wakeup: the root future run at src/clock/sim.rs")]
 	fn the_probe_reports_an_idle_wait_its_re_poll_registers() {
-		run_with(0, probing(), async {
-			let milestone = Rc::new(Cell::new(false));
-			drop(spawn({
-				let milestone = milestone.clone();
-				async move { milestone.set(true) }
-			}));
-			let mut waiting = None;
-			crate::wait(|waiter| {
-				if !milestone.get() {
-					return Poll::Pending;
-				}
-				let idle = waiting.get_or_insert_with(|| Box::pin(idle()));
-				waiter.poll_future(idle.as_mut())
-			})
-			.await;
+		let message = panic_message(|| {
+			run_with(0, probing(), async {
+				let milestone = Rc::new(Cell::new(false));
+				drop(spawn({
+					let milestone = milestone.clone();
+					async move { milestone.set(true) }
+				}));
+				let mut waiting = None;
+				crate::wait(|waiter| {
+					if !milestone.get() {
+						return Poll::Pending;
+					}
+					let idle = waiting.get_or_insert_with(|| Box::pin(idle()));
+					waiter.poll_future(idle.as_mut())
+				})
+				.await;
+			});
 		});
+		assert!(
+			message.contains(&format!("lost wakeup: the root future run at {}:", file!())),
+			"{message}"
+		);
 	}
 
 	/// A root that finishes right after another thread woke a task still fails the run.
@@ -1865,15 +1887,20 @@ mod tests {
 	}
 
 	#[test]
-	#[should_panic(expected = "in its kio::Tasks child in slot 1 pushed at src/clock/sim.rs")]
 	fn the_probe_blames_a_task_set_child() {
-		run_with(0, probing(), async {
-			type Boxed = Box<dyn FnMut(&crate::Waiter) -> Poll<()>>;
-			let mut tasks: crate::Tasks<Boxed> = crate::Tasks::new();
-			tasks.push(Box::new(|_: &crate::Waiter| Poll::Pending));
-			tasks.push(Box::new(unwoken()));
-			crate::wait(|waiter| tasks.poll(waiter)).await;
+		let message = panic_message(|| {
+			run_with(0, probing(), async {
+				type Boxed = Box<dyn FnMut(&crate::Waiter) -> Poll<()>>;
+				let mut tasks: crate::Tasks<Boxed> = crate::Tasks::new();
+				tasks.push(Box::new(|_: &crate::Waiter| Poll::Pending));
+				tasks.push(Box::new(unwoken()));
+				crate::wait(|waiter| tasks.poll(waiter)).await;
+			});
 		});
+		assert!(
+			message.contains(&format!("in its kio::Tasks child in slot 1 pushed at {}:", file!())),
+			"{message}"
+		);
 	}
 
 	/// Every task that was ready runs before a yielding task resumes, whatever the schedule.

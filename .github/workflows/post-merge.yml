@@ -1,6 +1,6 @@
 name: Post-merge
 
-# Slow and cross-platform lanes kept off the PR gate. A failure files an issue instead of
+# Slow and cross-platform lanes, beside check.yml's. A failure files an issue instead of
 # blocking a merge. Runs coalesce: a started run finishes and reports, while queued runs
 # collapse into the newest.
 on:
@@ -52,6 +52,45 @@ jobs:
           # Overrides rust-toolchain.toml's stable pin.
           RUSTUP_TOOLCHAIN: nightly
 
+  # The thread-spawning tests across many random Miri schedules, in a job of its own so the
+  # single-schedule lane above keeps its time. Random, not exhaustive.
+  miri-seeds:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: nightly
+          components: miri, rust-src
+      - uses: taiki-e/install-action@893d6ee8d714b6c7dfe2bcd94e5759e9a7958a7e # v2.90.10
+        with:
+          tool: just
+      - run: just miri-seeds
+        env:
+          RUSTUP_TOOLCHAIN: nightly
+
+  # The whole library suite under ThreadSanitizer, which runs at near-native speed.
+  tsan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: nightly
+          components: rust-src
+      - uses: taiki-e/install-action@893d6ee8d714b6c7dfe2bcd94e5759e9a7958a7e # v2.90.10
+        with:
+          tool: just
+      - run: just tsan
+        env:
+          RUSTUP_TOOLCHAIN: nightly
+
   # Criterion's test mode runs each bench once, so a panicking bench fails here.
   bench:
     runs-on: ubuntu-24.04
@@ -64,7 +103,7 @@ jobs:
       - run: cargo test --locked -p kio --benches
 
   report:
-    needs: [test, miri, bench]
+    needs: [test, miri, miri-seeds, tsan, bench]
     if: failure() && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
