@@ -21,13 +21,20 @@ check: coroutines
 coroutines:
     #!/usr/bin/env bash
     set -euo pipefail
-    mir=$(mktemp)
-    trap 'rm -f "$mir"' EXIT
+    # A stable path keeps rustc's args unchanged, so an unchanged rerun reuses the build
+    # and the MIR it left behind instead of adding a build to the cache.
+    mkdir -p target/coroutines
     # The bare default build, plus the features a poll-only consumer enables; `runtime`
     # swaps out the host-clock fallback, so neither build covers the other.
-    for features in "" macros,runtime,manual,serde; do
+    for features in default macros,runtime,manual,serde; do
+        # `--emit` splits on commas, so the file name cannot hold them.
+        mir="target/coroutines/${features//,/+}.mir"
         # Only the final crate gets `--emit`, so dependencies build as usual.
-        cargo rustc --locked -p kio --lib --no-default-features --features "$features" -- --emit "mir=$mir"
+        cargo rustc --locked -p kio --lib --no-default-features --features "${features#default}" -- --emit "mir=$PWD/$mir"
+        if [[ ! -s "$mir" ]]; then
+            echo "error: no MIR at $mir; run \`cargo clean -p kio\` to rebuild it" >&2
+            exit 1
+        fi
         # rustc names each coroutine by its body, as `{async fn body of queue::Queue<T>::pop()}`.
         found=$(grep -oE '\{async (fn body of [^{}]*|block@[^{}]*|closure@[^{}]*)\}' "$mir" | sort -u || true)
         if [[ -n "$found" ]]; then
