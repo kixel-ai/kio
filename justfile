@@ -36,7 +36,8 @@ coroutines:
             exit 1
         fi
         # rustc names each coroutine by its body, as `{async fn body of queue::Queue<T>::pop()}`.
-        found=$(grep -oE '\{async (fn body of [^{}]*|block@[^{}]*|closure@[^{}]*)\}' "$mir" | sort -u || true)
+        # Match the prefix only: a nested name holds braces, as `f::{closure#0}::g()`.
+        found=$(grep -oE '\{async (fn body of |block@|closure@)[^ ;,]*' "$mir" | sed -E 's/\}[^}]*$/}/' | sort -u || true)
         if [[ -n "$found" ]]; then
             echo "error: kio --features '$features' compiles coroutines without its async feature:" >&2
             echo "$found" >&2
