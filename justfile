@@ -5,7 +5,7 @@ default:
     @just --list
 
 # Lint the workspace, feature matrix, unused dependencies, rustdoc, workflows, TOML, Nix, and quest tree.
-check:
+check: coroutines
     cargo shear --locked --deny-warnings
     cargo clippy --locked --workspace --all-features --all-targets -- -D warnings
     cargo clippy --locked -p kio --no-default-features -- -D warnings
@@ -16,6 +16,28 @@ check:
     taplo format --check
     nixfmt --check flake.nix nix/verus.nix
     quest check
+
+# Fail if kio without its `async` feature compiles a coroutine: an `async fn` body, `async` block, or `async` closure.
+coroutines:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mir=$(mktemp)
+    trap 'rm -f "$mir"' EXIT
+    # The bare default build, plus the features a poll-only consumer enables; `runtime`
+    # swaps out the host-clock fallback, so neither build covers the other.
+    for features in "" macros,runtime,manual,serde; do
+        # Only the final crate gets `--emit`, so dependencies build as usual.
+        cargo rustc --locked -p kio --lib --no-default-features --features "$features" -- --emit "mir=$mir"
+        # rustc names each coroutine by its body, as `{async fn body of queue::Queue<T>::pop()}`.
+        found=$(grep -oE '\{async (fn body of [^{}]*|block@[^{}]*|closure@[^{}]*)\}' "$mir" | sort -u || true)
+        if [[ -n "$found" ]]; then
+            echo "error: kio --features '$features' compiles coroutines without its async feature:" >&2
+            echo "$found" >&2
+            echo "Gate each behind the feature, or generate it from a poll with #[kio::wrapper]." >&2
+            exit 1
+        fi
+        echo "kio --features '$features': no coroutines"
+    done
 
 # Run unit, doc, and trybuild UI tests across the workspace, failing on any host-clock timer.
 test *args:
