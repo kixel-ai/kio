@@ -1,0 +1,5 @@
+error: an `#[action]` is `fn name(&mut self, waiter: &kio::Waiter) -> Poll<()>`
+ --> tests/ui/action_shape.rs:9:10
+  |
+9 |     fn step(&self, waiter: &kio::Waiter) -> Poll<()> {
+  |             ^^^^^

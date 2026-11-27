@@ -89,8 +89,37 @@ pub fn machine(args: proc_macro::TokenStream, item: proc_macro::TokenStream) -> 
 	expand(args, item).unwrap_or_else(syn::Error::into_compile_error).into()
 }
 
+#[cfg(feature = "unstable-reactor")]
+mod reactor;
 mod sim_test;
 mod wrapper;
+
+/// Experimental: a reactor of named guarded actions over shared `kio` state.
+///
+/// On an inherent `impl`, each `#[action]` method, `fn name(&mut self, waiter: &kio::Waiter)
+/// -> Poll<()>`, is one guarded transition: `Poll::Ready(())` means it fired, one atomic
+/// step, and `Poll::Pending` means its guard is disabled, having changed nothing and
+/// registered `waiter` for what would enable it. Each `#[invariant]` method, `fn
+/// name(&self) -> bool`, must hold after every action.
+///
+/// It generates `enum <Type>Action`, one variant per action in declaration order, and
+/// `poll_next`, which fires the first enabled action in that order. Under the consuming
+/// crate's `sim` feature, it also generates `poll_action`, which fires one action regardless
+/// of priority, and `violated`, the first invariant that fails, so an explorer can fire
+/// actions in any order; `poll_next` then panics on a broken invariant.
+///
+/// An action may assume its own reactor's other actions ran before it only through state:
+/// an explorer re-polls every action of a reactor after any of them fires, but wakes the
+/// rest only through their waiters.
+///
+/// Behind `kio-macros`'s `unstable-reactor` feature until the state-machine spikes settle
+/// its design.
+#[cfg(feature = "unstable-reactor")]
+#[proc_macro_attribute]
+pub fn reactor(args: proc_macro::TokenStream, item: proc_macro::TokenStream) -> proc_macro::TokenStream {
+	let item = parse_macro_input!(item as ItemImpl);
+	reactor::expand(args.into(), item).into()
+}
 
 /// Generate the `async fn` that waits on a `poll_*` method.
 ///
