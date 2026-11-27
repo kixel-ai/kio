@@ -4,6 +4,11 @@
 
 # kio
 
+> **Moved:** kio now lives in [moq-dev/moq](https://github.com/moq-dev/moq) as
+> [`rs/kio`](https://github.com/moq-dev/moq/tree/main/rs/kio), which publishes it to crates.io
+> ([moq-dev/moq#9770](https://github.com/moq-dev/moq/pull/9770)). This repository is archived;
+> `lab/` stays here as a read-only record.
+
 Poll-native async shared state, a deterministic clock and simulator, and state-machine
 macros.
 
