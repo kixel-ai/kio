@@ -127,9 +127,14 @@ jobs:
           tag_crate() {
             local crate="$1" prefix="$2" version="$3"
             local tag="${prefix}-v${version}" crate_file status sha
-            if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" >/dev/null 2>&1; then
+            # Only a 404 means the tag is missing; any other error must not pass for one.
+            if out=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" 2>&1); then
               return 0
             fi
+            case "$out" in
+              *"HTTP 404"*) ;;
+              *) echo "${out}" >&2; return 1 ;;
+            esac
             status=$(curl -s -o /dev/null -w '%{http_code}' -A "kixel-ai/kio release" \
               "https://crates.io/api/v1/crates/${crate}/${version}")
             case "$status" in

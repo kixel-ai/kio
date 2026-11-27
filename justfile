@@ -74,17 +74,17 @@ ci: check test release-fresh
 release-pr:
     release-plz release-pr --git-token "$GITHUB_TOKEN"
 
-# Fail a release PR whose commit does not sit directly on main's tip, so it cannot merge before release.yml regenerates it from the newest main. Does nothing outside a pull_request run of a `release-plz-*` branch.
+# Fail a release PR that does not contain main's tip, so a run after main moves flags it stale until release.yml regenerates it from the newest main. Does nothing outside a pull_request run of a `release-plz-*` branch.
 release-fresh:
     #!/usr/bin/env bash
     set -euo pipefail
     [[ "${GITHUB_EVENT_NAME:-}" == pull_request && "${GITHUB_HEAD_REF:-}" == release-plz-* ]] || exit 0
     head=$(jq -r .pull_request.head.sha "$GITHUB_EVENT_PATH")
     main=$(git ls-remote origin refs/heads/main | cut -f1)
-    git fetch --quiet --depth=2 origin "$head"
-    parent=$(git rev-parse FETCH_HEAD^)
-    if [[ "$parent" != "$main" ]]; then
-        echo "error: this release PR is built on ${parent}, but main is at ${main}; wait for release.yml to regenerate it" >&2
+    # Deep enough to hold a release PR with a few extra commits on top of main's tip.
+    git fetch --quiet --depth=50 origin "$head" "$main"
+    if ! git merge-base --is-ancestor "$main" "$head"; then
+        echo "error: this release PR does not contain main's tip ${main}; wait for release.yml to regenerate it" >&2
         exit 1
     fi
 

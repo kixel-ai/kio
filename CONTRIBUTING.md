@@ -26,7 +26,7 @@ Ask before using the admin bypass of `main`'s rulesets.
 
 Nobody edits a version or `CHANGELOG.md` by hand. Every push to `main` runs `release.yml`, whose last job has release-plz open or regenerate one release PR (`release-plz-*` branch, titled `chore: release`) from the squash titles since each crate's last tag: it bumps `kio` and `kio-macros`, writes `CHANGELOG.md` and `macros/CHANGELOG.md`, and takes a breaking bump from a `!` title or a break `cargo-semver-checks` finds. Merging that PR is the release: the same workflow then publishes to crates.io and tags `kio-v<version>` and `macros-v<version>` (not `kio-macros-v`, which release-plz would also read as a `kio` tag), which is where the next changelog starts. Write each squash title for the changelog reader, and mark a change `chore`, `ci`, `test`, `build`, `bench`, or `quest` only when users should not read it (`.release-plz.toml` leaves those out).
 
-`just ci` fails a release PR whose commit does not sit on `main`'s tip, so it cannot merge before `release.yml` regenerates it; re-run `release.yml` on `main` if that never happens. `just release-pr` is the command CI runs, in `nix develop .#release`.
+`just ci` fails a release PR that does not contain `main`'s tip, but only when the check runs: until the merge queue re-runs it at merge time, a release PR that went green before `main` moved still looks green, so before merging one, confirm the latest `Release` run on `main` finished and the PR's head is newer than `main`'s tip. Re-run `release.yml` on `main` if the PR never regenerates. `just release-pr` is the command CI runs, in `nix develop .#release`.
 
 # Verified code
 
