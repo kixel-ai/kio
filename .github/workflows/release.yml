@@ -24,9 +24,12 @@ jobs:
       kio: ${{ steps.plan.outputs.kio }}
       macros_version: ${{ steps.plan.outputs.macros_version }}
       kio_version: ${{ steps.plan.outputs.kio_version }}
+      release_commit: ${{ steps.plan.outputs.release_commit }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # History, to find the commit that introduced a version.
+          fetch-depth: 0
           persist-credentials: false
       - id: plan
         run: |
@@ -45,13 +48,37 @@ jobs:
           }
           macros_ver=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "kio-macros") | .version')
           kio_ver=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "kio") | .version')
+          # The newest commit that touched a manifest's `version = "<version>"` line, which is
+          # the one that set it. Packaging and publishing check it out, so a push that lands
+          # after the release PR, or a rerun, never ships changes the release PR did not version.
+          introduced() {
+            local manifest="$1" version="$2"
+            git log -1 --format=%H -G"^version = \"${version//./\\.}\"\$" -- "$manifest"
+          }
           macros=$(check_crate kio-macros "$macros_ver")
           kio=$(check_crate kio "$kio_ver")
+          release_commit=""
+          if [[ "$macros" == true ]]; then
+            release_commit=$(introduced macros/Cargo.toml "$macros_ver")
+          fi
+          if [[ "$kio" == true ]]; then
+            kio_commit=$(introduced Cargo.toml "$kio_ver")
+            if [[ -n "$release_commit" && "$release_commit" != "$kio_commit" ]]; then
+              echo "kio ${kio_ver} and kio-macros ${macros_ver} were versioned in different commits" >&2
+              exit 1
+            fi
+            release_commit="$kio_commit"
+          fi
+          if [[ ( "$macros" == true || "$kio" == true ) && -z "$release_commit" ]]; then
+            echo "no commit set the unpublished version" >&2
+            exit 1
+          fi
           {
             echo "macros=$macros"
             echo "kio=$kio"
             echo "macros_version=$macros_ver"
             echo "kio_version=$kio_ver"
+            echo "release_commit=$release_commit"
           } >> "$GITHUB_OUTPUT"
 
   package:
@@ -61,6 +88,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.plan.outputs.release_commit }}
           persist-credentials: false
       - uses: ./.github/actions/nix
       # kio verifies, every feature on, against the kio-macros users will resolve: the
@@ -81,6 +109,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.plan.outputs.release_commit }}
           persist-credentials: false
       - id: auth
         uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
@@ -100,6 +129,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.plan.outputs.release_commit }}
           persist-credentials: false
       - id: auth
         uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
