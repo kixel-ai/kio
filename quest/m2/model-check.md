@@ -15,5 +15,8 @@ The state-machine spikes' comparison ([kixel-ai/kio#26](https://github.com/kixel
 
 ## Waiting
 
-- Maintainer: where the checker lives. Options: a `kio` feature such as `model` (recommended: it sits beside `sim` as kio's other deterministic test tool, and costs nothing when off); a separate `kio-model` crate (one more crate to publish and version, for about 200 lines); or a copy in moq-net's dev code (no kio API, but every later consumer copies it again). An agent cannot pick a crate's public surface.
+- Maintainer: where does the checker live? An agent cannot pick a crate's public surface.
+  - A `kio` feature such as `model` (Recommended) - beside `sim` as kio's other deterministic test tool, and costs nothing when off
+  - A separate `kio-model` crate - one more crate to publish and version, for about 200 lines
+  - A copy in moq-net's dev code - no kio API, but every later consumer copies it again
 - moq-dev/moq: a quest ports send credit to a pure machine checked by this checker. Check: moq's `quest/` tree names it. Until then the checker has no consumer outside kio's lab and stays private.
