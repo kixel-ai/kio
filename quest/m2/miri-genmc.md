@@ -30,7 +30,8 @@ GenMC needs no shims, so the only upkeep is one CI step. It moved to kio's m2
 with the extraction (866ef06).
 
 - Add a GenMC pass over the tests of `src/log.rs` and `src/channel.rs` that
-  spawn threads to the post-merge Miri lane that [ci-coverage](/quest/m1/ci-coverage.md) restores. Keep
+  spawn threads to the post-merge Miri lane (`just miri` in
+  [post-merge.yml](/.github/workflows/post-merge.yml)). Keep
   that lane's single-run passes, and the many-seeds pass once
   [its quest](/quest/m2/miri-seeds-tsan.md) lands, for everything GenMC cannot
   run.
@@ -41,10 +42,6 @@ with the extraction (866ef06).
   tracking. Recheck those limits and say in the recipe which remain.
 
 Public API: none. Wire: none.
-
-## Required
-
-- [Restore CI coverage](/quest/m1/ci-coverage.md) - the post-merge Miri lane this adds a pass to
 
 ## Related
 
