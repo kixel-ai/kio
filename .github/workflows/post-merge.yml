@@ -1,6 +1,6 @@
 name: Post-merge
 
-# Slow and cross-platform lanes kept off the PR gate. A failure files an issue instead of
+# Slow and cross-platform lanes, beside check.yml's. A failure files an issue instead of
 # blocking a merge. Runs coalesce: a started run finishes and reports, while queued runs
 # collapse into the newest.
 on:

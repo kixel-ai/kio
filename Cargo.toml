@@ -96,7 +96,7 @@ libc = { workspace = true }
 criterion = "0.8"
 futures = { workspace = true }
 # Enable the async wrappers, the simulator, and the installed manual clock so the
-# tests that await them run in the merge gate.
+# tests that await them run in `just ci`.
 kio = { path = ".", features = ["async", "manual", "sim", "serde"] }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "test-util", "time"] }
