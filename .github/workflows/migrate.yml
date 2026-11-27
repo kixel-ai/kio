@@ -1,0 +1,33 @@
+name: Migrate
+
+# Until the merge queue's `Queue` check gates it, reports a landed `!` squash title
+# without a MIGRATE.md entry. Apart from post-merge, whose coalescing would skip a commit.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  migrate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - uses: taiki-e/install-action@893d6ee8d714b6c7dfe2bcd94e5759e9a7958a7e # v2.90.10
+        with:
+          tool: just
+      - run: just migrate-check "$(git log -1 --format=%s)" HEAD~1
+      - if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BODY: "${{ github.sha }} has a breaking title but no MIGRATE.md entry: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        run: gh issue create --title "Breaking change without a MIGRATE.md entry" --body "$BODY"

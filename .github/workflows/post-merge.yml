@@ -63,22 +63,8 @@ jobs:
       - run: rustup toolchain install
       - run: cargo test --locked -p kio --benches
 
-  # Until the merge queue gates it, catches a landed `!` squash title without a MIGRATE.md entry.
-  migrate:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          fetch-depth: 2
-      - uses: taiki-e/install-action@893d6ee8d714b6c7dfe2bcd94e5759e9a7958a7e # v2.90.10
-        with:
-          tool: just
-      - run: just migrate-check "$(git log -1 --format=%s)" HEAD~1
-
   report:
-    needs: [test, miri, bench, migrate]
+    needs: [test, miri, bench]
     if: failure() && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
