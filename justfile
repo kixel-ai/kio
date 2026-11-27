@@ -9,7 +9,6 @@ check:
     cargo shear --locked --deny-warnings
     cargo clippy --locked --workspace --all-features --all-targets -- -D warnings
     cargo clippy --locked -p kio --no-default-features -- -D warnings
-    cargo clippy --locked -p kio-reactor-lab -- -D warnings
     cargo fmt --all --check
     RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --workspace --all-features
     actionlint
@@ -17,9 +16,14 @@ check:
     nixfmt --check flake.nix nix/verus.nix
     quest check
 
-# Run unit, doc, and trybuild UI tests across the workspace, failing on any host-clock timer.
+# Run unit, doc, and trybuild UI tests across the workspace, failing on any host-clock timer,
+# then kio's suite under each adversarial sim schedule with the lost-wakeup probe.
 test *args:
     KIO_DENY_HOST_TIMERS=1 cargo test --locked --workspace --all-features {{ args }}
+    # About 0.4 s a pass. Each run draws a fresh seed and prints it on failure, as the first pass does.
+    for schedule in random pct; do \
+        KIO_DENY_HOST_TIMERS=1 KIO_SIM_PROBE=1 KIO_SIM_SCHEDULE=$schedule cargo test --locked -q -p kio --all-features {{ args }}; \
+    done
 
 # Run kio's unit tests under Miri (nightly with the miri component).
 miri:
@@ -58,26 +62,6 @@ migrate-check title base="origin/main":
     fi
     echo "error: '$title' marks a breaking change, but the diff from $base changes neither MIGRATE.md nor macros/MIGRATE.md" >&2
     exit 1
-
-# Validate kio-reactor-lab's explored SendCredit runs with TLC, and model-check the split spec they follow.
-lab-tlc seeds="200":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    dir="$(mktemp -d)"
-    trap 'rm -rf "$dir"' EXIT
-    cargo run --locked -q -p kio-reactor-lab --example traces -- "$dir" {{ seeds }}
-    for model in "$dir"/*/; do
-        for cfg in Trace Split; do
-            spec=$([ "$cfg" = Trace ] && echo SendCreditTrace || echo SendCreditSplit)
-            echo "== $(basename "$model") $cfg"
-            if ! (cd "$model" && nix shell --inputs-from {{ justfile_directory() }} nixpkgs#tlaplus --command \
-                tlc -workers auto -cleanup -metadir "$dir/meta" -config "$cfg.cfg" "$spec.tla") >"$dir/tlc.log" 2>&1; then
-                cat "$dir/tlc.log"
-                exit 1
-            fi
-            grep -E "distinct states found|^Finished in" "$dir/tlc.log"
-        done
-    done
 
 # Prove src/log.rs's Verus proof. Needs Verus: run it in `nix develop .#verus`. The
 # `verify` package builds kio's sources with `vstd`, which kio itself never depends on.
