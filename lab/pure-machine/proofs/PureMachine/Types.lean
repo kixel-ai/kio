@@ -21,7 +21,7 @@ set_option maxRecDepth 2048
 namespace pure_machine
 
 /-- [kio::model::Disabled]
-    Source: 'src/model.rs', lines 100:0-100:19
+    Source: 'src/model.rs', lines 102:0-102:19
     Name pattern: [kio::model::Disabled]
     Visibility: public -/
 @[reducible, rust_type "kio::model::Disabled"]

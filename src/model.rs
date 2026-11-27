@@ -22,7 +22,9 @@
 //! with TLC, "every reachable state" holds up to fingerprint collisions: a state whose
 //! fingerprint matches a visited one is skipped, unchecked. For `n` states the chance
 //! of any collision is about `n² / 2⁶⁵`, about 2⁻²⁹ at 300 k states. Fingerprints
-//! use std's fixed-key hasher, so a run is reproducible on one toolchain.
+//! use std's fixed-key hasher, so a run is reproducible on one toolchain. The estimate
+//! assumes `Hash` feeds it every field that steps or rules read: states that differ only
+//! in a field it skips always share a fingerprint, so all but the first go unchecked.
 //!
 //! Requires the `model` feature, meant for dev-dependencies as `sim` is.
 //!

@@ -14,7 +14,8 @@ a poll-driven task set. `clock` is the time those waits run on, and its `sim` fe
 runs a test on a deterministic executor whose time jumps instead of sleeping. The
 `model` feature checks a pure state machine by visiting every state it can reach. The
 crates.io release predates `sim` and `model`, so take kio from Git until the next one ships
-(`cargo add --dev kio --git https://github.com/kixel-ai/kio --features sim`):
+(`cargo add --dev kio --git https://github.com/kixel-ai/kio --features sim`, or
+`--features model` for the checker):
 
 ```rust
 use std::time::Duration;
