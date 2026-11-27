@@ -1,7 +1,6 @@
 //! Which ready task the simulator runs next: the interleavings a run explores.
 //!
-//! Experimental: chosen per run from `KIO_SIM_SCHEDULE`, until the state-machine spikes
-//! settle whether this stays.
+//! Experimental: chosen per run from `KIO_SIM_SCHEDULE`.
 //!
 //! - `fifo` (the default): wake order.
 //! - `random`: a uniform pick among the ready tasks.

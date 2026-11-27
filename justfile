@@ -9,7 +9,6 @@ check: coroutines
     cargo shear --locked --deny-warnings
     cargo clippy --locked --workspace --all-features --all-targets -- -D warnings
     cargo clippy --locked -p kio --no-default-features -- -D warnings
-    cargo clippy --locked -p kio-reactor-lab -- -D warnings
     cargo fmt --all --check
     RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --workspace --all-features
     actionlint
@@ -51,6 +50,13 @@ coroutines:
 test *args:
     KIO_DENY_HOST_TIMERS=1 cargo test --locked --workspace --all-features {{ args }}
 
+# Run kio's suite under each adversarial sim schedule with the lost-wakeup probe, about
+# 0.4 s a pass. Each run draws a fresh seed and prints it on failure, as `test` does.
+sweep:
+    for schedule in random pct; do \
+        KIO_DENY_HOST_TIMERS=1 KIO_SIM_PROBE=1 KIO_SIM_SCHEDULE=$schedule cargo test --locked -q -p kio --all-features; \
+    done
+
 # Run kio's unit tests under Miri (nightly with the miri component).
 miri:
     #!/usr/bin/env bash
@@ -67,8 +73,8 @@ miri:
     # crossbeam-epoch's collector violates Stacked Borrows and never frees at exit.
     MIRIFLAGS="-Zmiri-tree-borrows -Zmiri-ignore-leaks" run cargo miri test --locked -p kio --lib log::
 
-# Run what CI runs: lint, test, then the release PR freshness check.
-ci: check test release-fresh
+# Run what CI runs: lint, test, the adversarial sweep, then the release PR freshness check.
+ci: check test sweep release-fresh
 
 # Open or regenerate the release PR from main's commits since each crate's last tag. CI runs it from release.yml with a token that can open PRs; run it in `nix develop .#release`.
 release-pr:
@@ -106,26 +112,6 @@ migrate-check title base="origin/main":
     fi
     echo "error: '$title' marks a breaking change, but the diff from $base changes neither MIGRATE.md nor macros/MIGRATE.md" >&2
     exit 1
-
-# Validate kio-reactor-lab's explored SendCredit runs with TLC, and model-check the split spec they follow.
-lab-tlc seeds="200":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    dir="$(mktemp -d)"
-    trap 'rm -rf "$dir"' EXIT
-    cargo run --locked -q -p kio-reactor-lab --example traces -- "$dir" {{ seeds }}
-    for model in "$dir"/*/; do
-        for cfg in Trace Split; do
-            spec=$([ "$cfg" = Trace ] && echo SendCreditTrace || echo SendCreditSplit)
-            echo "== $(basename "$model") $cfg"
-            if ! (cd "$model" && nix shell --inputs-from {{ justfile_directory() }} nixpkgs#tlaplus --command \
-                tlc -workers auto -cleanup -metadir "$dir/meta" -config "$cfg.cfg" "$spec.tla") >"$dir/tlc.log" 2>&1; then
-                cat "$dir/tlc.log"
-                exit 1
-            fi
-            grep -E "distinct states found|^Finished in" "$dir/tlc.log"
-        done
-    done
 
 # Prove src/log.rs's Verus proof. Needs Verus: run it in `nix develop .#verus`. The
 # `verify` package builds kio's sources with `vstd`, which kio itself never depends on.
