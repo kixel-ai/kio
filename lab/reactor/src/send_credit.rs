@@ -4,7 +4,7 @@
 //!
 //! The session mirrors `moq-net`'s `transport/open.rs`: the opens waiting for credit queue
 //! in a line ranked as the transport sends their streams, only the head asks the transport,
-//! leaving the line wakes the new head ([`Line::wake_head`]), and a waiting open resets the
+//! leaving the line wakes the new head (`Line::wake_head`), and a waiting open resets the
 //! lowest-ranked stream it preempts. `TrackRun` follows `lite/publisher.rs`'s cursor: a
 //! group handed out while another waits replaces it if it outranks it (`give_way`) and is
 //! shed otherwise, and while the waiting group ranks below every stream its subscription
