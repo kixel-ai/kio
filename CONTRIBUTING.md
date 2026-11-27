@@ -18,9 +18,9 @@ Have at least these sections:
 
 # Landing
 
-CI runs no checks on pull requests: run `just ci` before pushing, and `just verify` too for a change to `src/log.rs`, `verify/`, or kio's dependencies (see Verified code).
+CI runs no checks on pull requests: run `just ci` before pushing, and `just verify` too for a change to `src/`, `verify/`, `Cargo.toml`, `Cargo.lock`, or the toolchain (`rust-toolchain.toml`, `nix/verus.nix`), since the proof builds the whole crate with Verus's pinned rustc (see Verified code).
 A PR lands on the maintainer's pick once those and its local `quest review` rounds pass; queue the reviewed head with `quest merge <pr> --land <sha> --squash`.
-`check.yml` and `post-merge.yml` run after each push to `main`, and a post-merge failure files an issue.
+`check.yml` and `post-merge.yml` run after each push to `main`, and a failure in either files an issue.
 Ask before using the admin bypass of `main`'s rulesets.
 
 # Verified code

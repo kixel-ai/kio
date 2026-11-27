@@ -8,9 +8,10 @@ on:
 permissions:
   contents: read
 
+# Per ref; a started run finishes, so each landed commit's failure is reported against it.
 concurrency:
   group: check-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   check:
@@ -49,3 +50,27 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/nix
       - run: nix develop .#verus --command just verify
+
+  # Files or comments on the same issue as post-merge.yml's report.
+  report:
+    needs: [check, verify]
+    if: failure() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TITLE: Post-merge CI failed
+          BODY: "Check failed on ${{ github.sha }}: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        run: |
+          # Lists rather than searches, so an issue another run just opened is already visible.
+          issue=$(gh issue list --state open --limit 1000 --json number,title \
+            --jq "map(select(.title == \"$TITLE\")) | first | .number // empty")
+          if [ -n "$issue" ]; then
+            gh issue comment "$issue" --body "$BODY"
+          else
+            gh issue create --title "$TITLE" --body "$BODY"
+          fi
