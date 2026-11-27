@@ -40,6 +40,25 @@ miri:
 # Run what CI runs: lint, then test.
 ci: check test
 
+# Fail a breaking PR title (`type!:` or `type(scope)!:`) whose diff from `base` changes no MIGRATE.md.
+[positional-arguments]
+migrate-check title base="origin/main":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Positional, so a hostile title is never spliced into the script.
+    title=$1 base=$2
+    if ! [[ $title =~ ^[A-Za-z]+(\([^\)]*\))?!: ]]; then
+        echo "not breaking: $title"
+        exit 0
+    fi
+    changed=$(git diff --name-only "$base...HEAD")
+    if grep -qxE '(macros/)?MIGRATE\.md' <<<"$changed"; then
+        echo "breaking, and MIGRATE.md changed: $title"
+        exit 0
+    fi
+    echo "error: '$title' marks a breaking change, but the diff from $base changes neither MIGRATE.md nor macros/MIGRATE.md" >&2
+    exit 1
+
 # Validate kio-reactor-lab's explored SendCredit runs with TLC, and model-check the split spec they follow.
 lab-tlc seeds="200":
     #!/usr/bin/env bash
