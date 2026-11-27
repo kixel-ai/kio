@@ -10,7 +10,8 @@ Everything below breaks code written against `0.6.4`, the last release.
 
 kio no longer names MoQ.
 
-`Wall::MOQ_EPOCH` is gone, and `Wall::from_unix_secs(secs)` is now `pub const fn`.
+`Wall::MOQ_EPOCH` is gone (it never shipped in a release: only a Git revision of
+`moq-dev/moq` newer than `0.6.4` has it), and `Wall::from_unix_secs(secs)` is now `pub const fn`.
 Define the epoch once in the lowest crate that needs it and use that everywhere:
 
 ```rust
