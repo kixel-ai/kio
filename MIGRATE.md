@@ -6,6 +6,34 @@ How to update your code for each breaking change, newest first.
 
 Everything below breaks code written against `0.6.4`, the last release.
 
+### `Wall::MOQ_EPOCH` removed and `MOQ_SIM_SEED` renamed ([kixel-ai/kio#22](https://github.com/kixel-ai/kio/pull/22))
+
+kio no longer names MoQ.
+
+`Wall::MOQ_EPOCH` is gone, and `Wall::from_unix_secs(secs)` is now `pub const fn`.
+Define the epoch once in the lowest crate that needs it and use that everywhere:
+
+```rust
+pub const EPOCH: kio::clock::Wall = kio::clock::Wall::from_unix_secs(1_577_836_800); // 2020-01-01T00:00:00Z
+```
+
+`from_unix_secs` panics, which fails the build in a `const`, if `secs` overflows `u64`
+nanoseconds.
+
+The simulator reads its replay seed from `KIO_SIM_SEED` instead of `MOQ_SIM_SEED`, with no
+fallback to the old name: a script that still sets `MOQ_SIM_SEED` silently runs on a
+random seed. A failed `sim::run` prints `KIO_SIM_SEED=<seed>` in its replay hint.
+
+In `moq-dev/moq`, after bumping the kio rev:
+
+- Replace `Wall::MOQ_EPOCH` in `rs/hang` (`snapshot.rs`, `catalog/clock.rs`,
+  `catalog/root.rs`), `rs/moq-mux` (`clock.rs`, `catalog/producer.rs`), `rs/moq-gst`
+  (`sink/imp.rs`), `rs/moq-hls` (`export/mod.rs`), `rs/moq-net` (`model/clock.rs`),
+  `rs/moq-rtsp` (`client.rs`), and `rs/moq-stats` (`produce.rs`), with the shared
+  `EPOCH` above. A code search found these files; grep `MOQ_EPOCH` for the full list.
+- Rename `MOQ_SIM_SEED` to `KIO_SIM_SEED` in `doc/lib/rs/kio.md` and in every script,
+  workflow, and `just` recipe that sets it.
+
 ### `Hold` holds every wake on the thread ([moq-dev/moq#8293](https://github.com/moq-dev/moq/pull/8293))
 
 `kio::hold()` returns a `Hold` that holds back every wake this thread makes through a
