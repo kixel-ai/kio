@@ -1,0 +1,7 @@
+# ThreadSanitizer suppressions for `just tsan`. A line needs a comment naming the false
+# positive it hides; a real race gets fixed, never listed here.
+
+# Segment::release frees the segment after `fetch_sub(Release)` and `fence(Acquire)`, the
+# standard refcount idiom. ThreadSanitizer does not model `atomic_thread_fence`, so it
+# sees the free as unordered with the other owners' last accesses.
+race:Segment*release
